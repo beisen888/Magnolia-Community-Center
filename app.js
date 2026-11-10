@@ -34,7 +34,7 @@ function firstWorkdayFrom(s) {
 const S = {
   y: now.getFullYear(), m: now.getMonth(), sel: TODAY, tab: "month",
   groups: [...CFG.defaultGroups], editing: false,
-  rows: [], me: null, mode: "connecting", notice: "", loaded: false,
+  rows: [], waitlist: [], announcement: "", me: null, mode: "connecting", notice: "", loaded: false,
 };
 S.sel = firstWorkdayFrom(TODAY);
 let B = null;
@@ -53,6 +53,8 @@ function buildIndex() {
 const canAct = () => B && (B.mode === "preview" || !!S.me);
 const isAdmin = () => !!(S.me && S.me.isAdmin);
 const displayName = (r) => (S.me && r.userId === S.me.id ? "You" : r.name || "Volunteer");
+const waitFor = (date, shiftId) => S.waitlist.filter((w) => w.date === date && w.shiftId === shiftId).sort((a, b) => a.at - b.at);
+const myWaitPos = (date, shiftId) => { const i = waitFor(date, shiftId).findIndex((w) => S.me && w.userId === S.me.id); return i < 0 ? 0 : i + 1; };
 
 /* ---------- data ---------- */
 let loadSeq = 0;
@@ -64,9 +66,9 @@ async function refresh() {
   const horizon = addDays(TODAY, CFG.openSpotsDays || 21);
   const to = monthEnd() > horizon ? monthEnd() : horizon;
   try {
-    const { rows, groups } = await B.load(from, to);
+    const { rows, groups, waitlist, announcement } = await B.load(from, to);
     if (seq !== loadSeq) return;
-    S.rows = rows;
+    S.rows = rows; S.waitlist = waitlist || []; S.announcement = announcement || "";
     if (Array.isArray(groups) && groups.length === LANES && !S.editing) S.groups = groups.map((g, i) => String(g || CFG.defaultGroups[i]).slice(0, 24));
     S.mode = B.mode; S.loaded = true;
     if (B.mode === "live" && S.me && !S.me.isAdmin && S.noAdmin === undefined) B.hasAdmin().then((h) => { S.noAdmin = !h; render(); });
@@ -194,9 +196,9 @@ function renderGroups() {
 }
 
 function renderNotice() {
-  let h = S.notice ? `<p class="notice" role="status">${esc(S.notice)}</p>` : "";
-  if (B && B.mode === "live" && !S.me && S.loaded)
-    h += `<p class="notice info">You're viewing the board. <button class="btn" id="notice-signin">Sign in</button> to take a lane and see who's coming.</p>`;
+  let h = S.announcement ? `<div class="announce" role="note"><span class="eyebrow">Announcement</span><p>${esc(S.announcement)}</p></div>` : "";
+  h += S.notice ? `<p class="notice" role="status">${esc(S.notice)}</p>` : "";
+  if (B && B.mode === "live" && !S.me && S.loaded) h += welcomeHero();
   if (S.noAdmin && S.me && !S.me.isAdmin)
     h += `<p class="notice info">This board doesn't have an admin yet. If you're the organizer, <button class="btn" id="claim-admin">Claim admin</button></p>`;
   $("notice").innerHTML = h;
@@ -205,6 +207,16 @@ function renderNotice() {
     if (!ok) throw Object.assign(new Error(), { friendly: "Someone else already claimed admin." });
   }, "You're the admin now. Check the Admin tab.");
   const b = $("notice-signin"); if (b) b.onclick = openSignIn;
+  const so = $("hero-open"); if (so) so.onclick = () => setTab("open");
+}
+
+function welcomeHero() {
+  const total = SHIFTS.reduce((a, sh) => a + (sh.end - sh.start), 0);
+  return `<section class="hero"><div><span class="eyebrow">Volunteer with ${esc(CFG.orgName)}</span>
+    <h2>Pick a shift. Show up. Every group stays covered.</h2>
+    <p>Shifts are ${SHIFTS.map((sh) => `${sh.label.toLowerCase()} (${hr(sh.start)}–${hr(sh.end)})`).join(" and ")}. You'll rotate through all five groups, one hour each, so nobody is stuck in one spot.</p>
+    <div class="hero-cta"><button class="btn lg" id="notice-signin">Sign in to sign up</button><button class="btn ghost lg" id="hero-open">See open spots</button></div></div>
+    <ol class="steps"><li><b>Sign in with your email.</b> No password. We email you a one-tap link.</li><li><b>Take an open lane.</b> Full shift? Join the waitlist and you'll get the next spot that opens.</li><li><b>Add it to your calendar.</b> One tap from My schedule, with a reminder.</li></ol></section>`;
 }
 
 function renderTabs(idx) {
@@ -274,13 +286,22 @@ function renderDay(idx) {
     h += `</tbody><tfoot><tr class="cov"><th colspan="2">Groups covered</th>` + hours.map((x) => {
       const covered = new Set(L.map((r, k) => (r ? groupAt(k, x) : null)).filter((v) => v !== null));
       return `<td title="${covered.size} of ${LANES} groups staffed at ${hr(x)}"><span class="dots">${[0, 1, 2, 3, 4].map((g) => `<i class="${covered.has(g) ? "on" : ""}"></i>`).join("")}</span></td>`;
-    }).join("") + `<td></td></tr></tfoot></table></div></div>`;
+    }).join("") + `<td></td></tr></tfoot></table></div>`;
+    const wl = waitFor(s, sh.id), pos = myWaitPos(s, sh.id);
+    if (!past && (taken === LANES || wl.length) && !mineHere) {
+      h += `<div class="wl"><span><b>${taken === LANES ? "Full" : "Waitlist"}</b> · ${wl.length ? `${wl.length} waiting` : "no one waiting yet"}${S.me && wl.length ? `: ${wl.map((w) => esc(displayName(w))).join(", ")}` : ""}</span>`
+        + (pos ? `<span class="wlpos">You're #${pos}</span><button class="btn quiet" data-unwait="${sh.id}">Leave waitlist</button>`
+               : `<button class="btn ghost" data-wait="${sh.id}">Join waitlist</button>`) + `</div>`;
+    }
+    h += `</div>`;
   }
   if (!past) h += `<p class="hint"><button class="linkbtn" id="share-day">Copy link to this day</button> Send it to people when you need help.</p>`;
   h += `<p class="hint">Lane 1 starts in ${esc(S.groups[0])} at ${hr(DAY_START)}, lane 2 in ${esc(S.groups[1])}, and so on. Taking the same lane number in both shifts keeps one continuous rotation all day.</p>`;
   el.innerHTML = h;
   el.querySelectorAll("[data-take]").forEach((b) => b.onclick = () => takeLane(s, b.dataset.take, +b.dataset.lane));
   el.querySelectorAll("[data-drop]").forEach((b) => b.onclick = () => dropLane(s, b.dataset.drop));
+  el.querySelectorAll("[data-wait]").forEach((b) => b.onclick = () => { if (needsSignIn()) return; act(() => B.joinWaitlist(s, b.dataset.wait), "You're on the waitlist. If a lane opens, it's yours automatically."); });
+  el.querySelectorAll("[data-unwait]").forEach((b) => b.onclick = () => act(() => B.leaveWaitlist(s, b.dataset.unwait), "Left the waitlist."));
   el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => removeOther(b.dataset.rm, s, b.dataset.sh, b.dataset.name));
   const sd = $("share-day");
   if (sd) sd.onclick = async () => {
@@ -326,7 +347,7 @@ function renderOpen(idx) {
       const lane = suggestLane(idx, d.date, it);
       let right;
       if (it.mine) right = `<span class="full">You're on lane ${it.mine.lane + 1}</span>`;
-      else if (it.open === 0) right = `<span class="full">Full</span>`;
+      else if (it.open === 0) { const pos = myWaitPos(d.date, it.sh.id); right = pos ? `<span class="full">Waitlist #${pos}</span>` : `<span class="full">Full</span><button class="btn ghost" data-wq="${d.date}|${it.sh.id}">Join waitlist</button>`; }
       else right = `<span class="need">${it.open} open</span><button class="btn" data-q="${d.date}|${it.sh.id}|${lane}">Take lane ${lane + 1}</button>`;
       h += `<div class="sh"><span class="lbl">${it.sh.label}<small>${hs(it.sh.start)}–${hs(it.sh.end)}</small></span>${miniBar(it.L, it.sh)}${right}<button class="linkbtn" data-view="${d.date}">View day</button></div>`;
     }
@@ -334,6 +355,7 @@ function renderOpen(idx) {
   }
   $("v-open").innerHTML = h + `</div>`;
   $("v-open").querySelectorAll("[data-q]").forEach((b) => b.onclick = () => { const [d, sh, l] = b.dataset.q.split("|"); takeLane(d, sh, +l); });
+  $("v-open").querySelectorAll("[data-wq]").forEach((b) => b.onclick = () => { if (needsSignIn()) return; const [d, sh] = b.dataset.wq.split("|"); act(() => B.joinWaitlist(d, sh), "You're on the waitlist."); });
   $("v-open").querySelectorAll("[data-view]").forEach((b) => b.onclick = () => {
     const d = parse(b.dataset.view); S.y = d.getFullYear(); S.m = d.getMonth(); S.sel = b.dataset.view; setTab("month"); refresh();
   });
@@ -345,10 +367,12 @@ function renderMine(idx) {
   const monthName = new Date(S.y, S.m, 1).toLocaleDateString("en-US", { month: "long" });
   if (B && B.mode === "live" && !S.me) { el.innerHTML = `<div class="empty"><h3>Sign in to see your schedule</h3><p><button class="btn lg" id="mine-signin">Sign in</button></p></div>`; $("mine-signin").onclick = openSignIn; return; }
   const dates = [...new Set(Object.keys(mine).filter((k) => k.startsWith(prefix)).map((k) => k.split("_")[0]))].sort();
+  const myWaits = S.waitlist.filter((w) => S.me && w.userId === S.me.id && w.date >= TODAY).sort((a, b) => (a.date + a.shiftId < b.date + b.shiftId ? -1 : 1));
+  const waitHtml = myWaits.length ? `<div class="wlbox"><span class="eyebrow">Waitlists you're on</span>${myWaits.map((w) => { const sh = SHIFTS.find((x) => x.id === w.shiftId); return `<div>${shortDate(w.date)} · ${sh ? sh.label : w.shiftId}: <b>#${myWaitPos(w.date, w.shiftId)}</b> in line <button class="linkbtn" data-unwait2="${w.date}|${w.shiftId}">Leave</button></div>`; }).join("")}<p class="hint" style="margin:6px 0 0">If a lane opens, it's assigned to you automatically and shows up here.</p></div>` : "";
   const calBtn = `<button class="btn ghost lg" id="ics">Add upcoming shifts to my calendar</button>`;
   if (!dates.length) {
-    el.innerHTML = `<div class="empty"><h3>No shifts in ${monthName} yet</h3>Check <b>Open spots</b> or pick a day on the Month tab and take an open lane.<p style="margin-top:14px">${calBtn}</p></div>`;
-    $("ics").onclick = exportIcs; return;
+    el.innerHTML = waitHtml + `<div class="empty"><h3>No shifts in ${monthName} yet</h3>Check <b>Open spots</b> or pick a day on the Month tab and take an open lane.<p style="margin-top:14px">${calBtn}</p></div>`;
+    $("ics").onclick = exportIcs; wireUnwait(el); return;
   }
   const perGroup = [0, 0, 0, 0, 0]; let hours = 0, shifts = 0;
   for (const k of Object.keys(mine)) {
@@ -374,8 +398,11 @@ function renderMine(idx) {
     const which = SHIFTS.filter((s) => mine[shiftKey(d, s.id)]).map((s) => `${s.label} · lane ${mine[shiftKey(d, s.id)].lane + 1}`).join("<br>");
     h += `<div class="drow"><div class="d">${shortDate(d)}<small>${which}</small></div><div class="tl" style="grid-template-columns:repeat(${allHours.length},minmax(0,1fr))">${cells}</div></div>`;
   }
-  el.innerHTML = h + `</div>`;
-  $("ics").onclick = exportIcs;
+  el.innerHTML = waitHtml + h + `</div>`;
+  $("ics").onclick = exportIcs; wireUnwait(el);
+}
+function wireUnwait(el) {
+  el.querySelectorAll("[data-unwait2]").forEach((b) => b.onclick = () => { const [d, sh] = b.dataset.unwait2.split("|"); act(() => B.leaveWaitlist(d, sh), "Left the waitlist."); });
 }
 
 function nextUpCard(mine) {
@@ -449,7 +476,8 @@ function renderAdmin(idx) {
   const pct = st.lanes ? Math.round((st.filled / st.lanes) * 100) : 0;
   const hours = st.people.reduce((a, p) => a + p.hours, 0);
   const gaps = st.days.filter((d) => !isPast(d.date) && d.filled < d.total).sort((a, b) => a.filled - b.filled || (a.date < b.date ? -1 : 1)).slice(0, 6);
-  let h = `<div class="adm"><div class="toolbar"><p>Coverage and volunteer hours for <b>${monthName}</b>. Use the arrows up top to switch months.</p><span><button class="btn ghost lg" id="csv">Download CSV</button> <button class="btn quiet lg" id="print">Print</button></span></div>`;
+  let h = `<div class="adm"><div class="card annedit"><label for="ann" class="eyebrow">Announcement banner</label><textarea id="ann" maxlength="280" rows="2" placeholder="e.g. Extra help needed Friday afternoon! (Leave empty to hide the banner.)">${esc(S.announcement)}</textarea><div class="row"><span class="hint" style="margin:0">Shows at the top of the board for everyone.</span><button class="btn" id="ann-save">Save</button></div></div>`;
+  h += `<div class="toolbar"><p>Coverage and volunteer hours for <b>${monthName}</b>. Use the arrows up top to switch months.</p><span><button class="btn ghost lg" id="csv">Download CSV</button> <button class="btn quiet lg" id="print">Print</button></span></div>`;
   h += `<div class="cards"><div class="card"><div class="v">${pct}%</div><div class="k">lanes filled (${st.filled} of ${st.lanes})</div></div><div class="card"><div class="v">${st.people.length}</div><div class="k">volunteers</div></div><div class="card"><div class="v">${hours}</div><div class="k">volunteer hours</div></div><div class="card"><div class="v">${st.lanes - st.filled}</div><div class="k">open lanes</div></div></div>`;
   if (gaps.length) h += `<h2>Thinnest upcoming days</h2><div class="spots">${gaps.map((d) => `<div class="spot"><div class="d">${shortDate(d.date)}</div><div class="sh"><span class="need">${d.filled} of ${d.total} lanes filled</span><button class="linkbtn" data-view="${d.date}">Open day</button></div></div>`).join("")}</div>`;
   h += `<h2>Roster</h2>`;
@@ -461,6 +489,7 @@ function renderAdmin(idx) {
   if (B.mode === "preview") h += `<p class="hint">Preview mode shows demo volunteers. <button class="linkbtn" id="reset">Reset demo data</button></p>`;
   $("v-admin").innerHTML = h + `</div>`;
   $("csv").onclick = () => downloadCsv(idx);
+  $("ann-save").onclick = () => { const v = $("ann").value.trim().slice(0, 280); act(() => B.saveAnnouncement(v), v ? "Announcement posted." : "Announcement removed."); };
   $("print").onclick = () => window.print();
   const rs = $("reset"); if (rs) rs.onclick = () => { if (confirm("Reset all preview data on this device?")) B.resetDemo(); };
   $("v-admin").querySelectorAll("[data-view]").forEach((b) => b.onclick = () => { S.sel = b.dataset.view; setTab("month"); });
@@ -519,7 +548,11 @@ function renderFooter() {
 /* ---------- navigation ---------- */
 function setTab(t) { S.tab = TABS.includes(t) ? t : "month"; if (location.hash.slice(1) !== S.tab) history.replaceState(null, "", location.pathname + location.search + "#" + S.tab); render(); }
 document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
-window.addEventListener("hashchange", () => { const t = location.hash.slice(1); if (TABS.includes(t) && t !== S.tab) setTab(t); });
+window.addEventListener("hashchange", () => {
+  const t = location.hash.slice(1), m = /^day-(\d{4}-\d{2}-\d{2})$/.exec(t);
+  if (m) { const d = parse(m[1]); const moved = d.getFullYear() !== S.y || d.getMonth() !== S.m; S.y = d.getFullYear(); S.m = d.getMonth(); S.sel = m[1]; S.tab = "month"; render(); if (moved) refresh(); return; }
+  if (TABS.includes(t) && t !== S.tab) setTab(t);
+});
 function shiftMonth(dir) {
   let m = S.m + dir, y = S.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
   S.y = y; S.m = m;

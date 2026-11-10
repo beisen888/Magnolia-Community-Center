@@ -116,6 +116,71 @@ do $$ begin
   alter publication supabase_realtime add table public.settings;
 exception when duplicate_object then null; end $$;
 
+-- ---------- announcement (admins edit it from the Admin tab) ----------
+alter table public.settings add column if not exists announcement text not null default ''
+  check (char_length(announcement) <= 280);
+
+-- ---------- waitlist ----------
+create table if not exists public.waitlist (
+  id         bigint generated always as identity primary key,
+  user_id    uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  shift_date date not null,
+  shift_id   text not null check (char_length(shift_id) <= 12),
+  created_at timestamptz not null default now(),
+  unique (user_id, shift_date, shift_id)
+);
+grant select, insert, delete on public.waitlist to authenticated;
+alter table public.waitlist enable row level security;
+drop policy if exists "read waitlist" on public.waitlist;
+create policy "read waitlist" on public.waitlist for select to authenticated using (true);
+drop policy if exists "join waitlist" on public.waitlist;
+create policy "join waitlist" on public.waitlist for insert to authenticated
+  with check (user_id = auth.uid() and shift_date >= public.org_today());
+drop policy if exists "leave waitlist" on public.waitlist;
+create policy "leave waitlist" on public.waitlist for delete to authenticated
+  using (user_id = auth.uid() or public.is_admin());
+
+-- When a lane opens up (someone drops or switches lanes), give it to the first person waiting.
+create or replace function public.fill_from_waitlist() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare w record;
+begin
+  if tg_op = 'UPDATE' and old.lane = new.lane and old.shift_date = new.shift_date and old.shift_id = new.shift_id then
+    return new;
+  end if;
+  if old.shift_date >= public.org_today() then
+    select * into w from public.waitlist wl
+      where wl.shift_date = old.shift_date and wl.shift_id = old.shift_id
+        and not exists (select 1 from public.signups s
+                        where s.user_id = wl.user_id and s.shift_date = wl.shift_date and s.shift_id = wl.shift_id)
+      order by wl.created_at limit 1 for update skip locked;
+    if found then
+      insert into public.signups (user_id, shift_date, shift_id, lane)
+        values (w.user_id, old.shift_date, old.shift_id, old.lane) on conflict do nothing;
+      delete from public.waitlist where id = w.id;
+    end if;
+  end if;
+  return coalesce(new, old);
+end $$;
+drop trigger if exists signups_fill_waitlist on public.signups;
+create trigger signups_fill_waitlist after delete or update on public.signups
+  for each row execute function public.fill_from_waitlist();
+
+-- Taking a lane directly removes you from that shift's waitlist.
+create or replace function public.clear_own_waitlist() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.waitlist where user_id = new.user_id and shift_date = new.shift_date and shift_id = new.shift_id;
+  return new;
+end $$;
+drop trigger if exists signups_clear_waitlist on public.signups;
+create trigger signups_clear_waitlist after insert on public.signups
+  for each row execute function public.clear_own_waitlist();
+
+do $$ begin
+  alter publication supabase_realtime add table public.waitlist;
+exception when duplicate_object then null; end $$;
+
 -- ---------- admin management (used by the Admin tab) ----------
 -- Admins can see everyone's name + email and promote/demote other admins.
 create or replace function public.admin_people()

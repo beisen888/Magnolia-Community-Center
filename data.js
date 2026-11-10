@@ -52,19 +52,40 @@ function previewBackend(cfg) {
     async load(from, to) {
       const rows = st.rows.filter((r) => r.date >= from && r.date <= to)
         .map((r) => ({ ...r, name: r.userId === ME ? (st.myName || "You") : r.name }));
-      return { rows, groups: st.groups };
+      const waitlist = (st.waitlist || []).filter((w) => w.date >= from && w.date <= to)
+        .map((w) => ({ ...w, name: w.userId === ME ? (st.myName || "You") : w.name }));
+      return { rows, groups: st.groups, waitlist, announcement: st.announcement || "" };
     },
     async take(date, shiftId, lane) {
       if (st.rows.some((r) => r.date === date && r.shiftId === shiftId && r.lane === lane && r.userId !== ME)) fail("Someone already has that lane. Pick another.");
       const mine = st.rows.find((r) => r.date === date && r.shiftId === shiftId && r.userId === ME);
       if (mine) { mine.lane = lane; mine.at = Date.now(); }
       else st.rows.push({ date, shiftId, lane, userId: ME, name: "", at: Date.now() });
+      st.waitlist = (st.waitlist || []).filter((w) => !(w.date === date && w.shiftId === shiftId && w.userId === ME));
       write(st); notify();
     },
     async drop(date, shiftId, userId = ME) {
-      st.rows = st.rows.filter((r) => !(r.date === date && r.shiftId === shiftId && r.userId === userId));
+      const gone = st.rows.find((r) => r.date === date && r.shiftId === shiftId && r.userId === userId);
+      st.rows = st.rows.filter((r) => r !== gone);
+      const wl = (st.waitlist || []).filter((w) => w.date === date && w.shiftId === shiftId).sort((a, b) => a.at - b.at);
+      if (gone && wl.length) { // same rule as the database: next person in line gets the lane
+        const w = wl[0];
+        st.rows.push({ date, shiftId, lane: gone.lane, userId: w.userId, name: w.name, at: Date.now() });
+        st.waitlist = st.waitlist.filter((x) => x !== w);
+      }
       write(st); notify();
     },
+    async joinWaitlist(date, shiftId) {
+      st.waitlist ||= [];
+      if (!st.waitlist.some((w) => w.date === date && w.shiftId === shiftId && w.userId === ME))
+        st.waitlist.push({ date, shiftId, userId: ME, name: "", at: Date.now() });
+      write(st); notify();
+    },
+    async leaveWaitlist(date, shiftId) {
+      st.waitlist = (st.waitlist || []).filter((w) => !(w.date === date && w.shiftId === shiftId && w.userId === ME));
+      write(st); notify();
+    },
+    async saveAnnouncement(text) { st.announcement = text; write(st); notify(); },
     async setName(name) { st.myName = name; write(st); notify(); },
     async saveGroups(list) { st.groups = list; write(st); notify(); },
     async signIn() {}, async signOut() {},
@@ -134,6 +155,7 @@ async function supabaseBackend(cfg) {
     channel = sb.channel("board")
       .on("postgres_changes", { event: "*", schema: "public", table: "signups" }, ping)
       .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, ping)
+      .on("postgres_changes", { event: "*", schema: "public", table: "waitlist" }, ping)
       .subscribe();
   }
 
@@ -151,14 +173,21 @@ async function supabaseBackend(cfg) {
     },
     me() { return me; },
     async load(from, to) {
-      const settings = await sb.from("settings").select("groups").eq("id", 1).maybeSingle();
+      const settings = await sb.from("settings").select("*").eq("id", 1).maybeSingle();
       const groups = (settings.data && settings.data.groups) || cfg.defaultGroups;
+      const announcement = (settings.data && settings.data.announcement) || "";
       if (me) {
         const { data, error } = await sb.from("signups")
           .select("shift_date,shift_id,lane,user_id,created_at,profiles(name)")
           .gte("shift_date", from).lte("shift_date", to);
         if (error) throw friendly(error);
-        return { groups, rows: data.map((r) => ({
+        const wl = await sb.from("waitlist").select("shift_date,shift_id,user_id,created_at,profiles(name)")
+          .gte("shift_date", from).lte("shift_date", to);
+        const waitlist = (wl.data || []).map((w) => ({
+          date: w.shift_date, shiftId: w.shift_id, userId: w.user_id,
+          name: (w.profiles && w.profiles.name) || "Volunteer", at: Date.parse(w.created_at) || 0,
+        }));
+        return { groups, announcement, waitlist, rows: data.map((r) => ({
           date: r.shift_date, shiftId: r.shift_id, lane: r.lane, userId: r.user_id,
           name: (r.profiles && r.profiles.name) || "Volunteer", at: Date.parse(r.created_at) || 0,
         })) };
@@ -166,7 +195,7 @@ async function supabaseBackend(cfg) {
       const { data, error } = await sb.from("lane_status").select("shift_date,shift_id,lane")
         .gte("shift_date", from).lte("shift_date", to);
       if (error) throw friendly(error);
-      return { groups, rows: data.map((r, i) => ({
+      return { groups, announcement, waitlist: [], rows: data.map((r, i) => ({
         date: r.shift_date, shiftId: r.shift_id, lane: r.lane, userId: "anon-" + i, name: "Volunteer", at: 0,
       })) };
     },
@@ -205,6 +234,21 @@ async function supabaseBackend(cfg) {
     },
     async signOut() { await sb.auth.signOut(); me = null; notify(); },
     async hasAdmin() { const { data } = await sb.rpc("has_admin"); return !!data; },
+    async joinWaitlist(date, shiftId) {
+      const { error } = await sb.from("waitlist").insert({ shift_date: date, shift_id: shiftId });
+      if (error && error.code !== "23505") throw friendly(error);
+      ping();
+    },
+    async leaveWaitlist(date, shiftId) {
+      const { error } = await sb.from("waitlist").delete().eq("user_id", me.id).eq("shift_date", date).eq("shift_id", shiftId);
+      if (error) throw friendly(error);
+      ping();
+    },
+    async saveAnnouncement(text) {
+      const { error } = await sb.from("settings").update({ announcement: text }).eq("id", 1);
+      if (error) throw friendly(error);
+      ping();
+    },
     async claimAdmin() {
       const { data, error } = await sb.rpc("claim_first_admin");
       if (error) throw friendly(error);
