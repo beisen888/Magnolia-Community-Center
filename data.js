@@ -68,6 +68,15 @@ function previewBackend(cfg) {
     async setName(name) { st.myName = name; write(st); notify(); },
     async saveGroups(list) { st.groups = list; write(st); notify(); },
     async signIn() {}, async signOut() {},
+    async hasAdmin() { return true; },
+    async claimAdmin() { return false; },
+    async listPeople() {
+      const names = [...new Set(st.rows.filter((r) => r.userId !== ME).map((r) => r.name))];
+      st.admins ||= {};
+      return [{ id: ME, name: st.myName || "You", email: "you@example.com", isAdmin: true },
+        ...names.map((n) => ({ id: "demo-" + n, name: n, email: n.toLowerCase() + "@example.com", isAdmin: !!st.admins["demo-" + n] }))];
+    },
+    async setAdmin(id, on) { st.admins ||= {}; st.admins[id] = on; write(st); },
     resetDemo() { st = seedDemo(cfg); write(st); notify(); },
   };
 }
@@ -195,6 +204,22 @@ async function supabaseBackend(cfg) {
       if (error) { const e = new Error(error.message); e.friendly = error.message; throw e; }
     },
     async signOut() { await sb.auth.signOut(); me = null; notify(); },
+    async hasAdmin() { const { data } = await sb.rpc("has_admin"); return !!data; },
+    async claimAdmin() {
+      const { data, error } = await sb.rpc("claim_first_admin");
+      if (error) throw friendly(error);
+      const { data: sess } = await sb.auth.getSession(); await refreshMe(sess.session); notify();
+      return !!data;
+    },
+    async listPeople() {
+      const { data, error } = await sb.rpc("admin_people");
+      if (error) throw friendly(error);
+      return data.map((p) => ({ id: p.id, name: p.name || "", email: p.email || "", isAdmin: p.is_admin, joined: p.created_at }));
+    },
+    async setAdmin(id, on) {
+      const { error } = await sb.rpc("set_admin", { target: id, make_admin: on });
+      if (error) { const e = new Error(error.message); e.friendly = error.message; throw e; }
+    },
   };
 }
 

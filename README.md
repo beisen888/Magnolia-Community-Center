@@ -46,7 +46,9 @@ Also: email magic-link sign-in (no passwords), live updates across everyone's sc
 5. Copy your `*.vercel.app` URL into Supabase's **Site URL** (step 2.3).
 
 ### 4. Make yourself an admin
-Sign in on the live site once, then in Supabase SQL Editor run:
+Sign in on the live site, add your name, and click **Claim admin** in the banner (only works while the board has no admin). Add more admins from **Admin → People & admins**.
+
+Manual fallback, in the Supabase SQL Editor:
 ```sql
 update public.profiles set is_admin = true
 where id = (select id from auth.users where email = 'you@example.com');
@@ -57,6 +59,9 @@ Refresh the site. The **Admin** tab appears.
 Vercel → Project → **Settings → Domains** → add e.g. `shifts.yourorg.org`. Update the Supabase Site URL to match.
 
 ---
+
+## Handing it to a client
+See **HANDOFF.md**: transfer this board, or let them build their own from a template.
 
 ## Working in Cursor
 

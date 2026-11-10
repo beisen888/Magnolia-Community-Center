@@ -69,6 +69,7 @@ async function refresh() {
     S.rows = rows;
     if (Array.isArray(groups) && groups.length === LANES && !S.editing) S.groups = groups.map((g, i) => String(g || CFG.defaultGroups[i]).slice(0, 24));
     S.mode = B.mode; S.loaded = true;
+    if (B.mode === "live" && S.me && !S.me.isAdmin && S.noAdmin === undefined) B.hasAdmin().then((h) => { S.noAdmin = !h; render(); });
   } catch (e) {
     S.notice = (e && e.friendly) || "Couldn't load the schedule. Check your connection and refresh.";
   }
@@ -138,7 +139,7 @@ function render() {
   if (S.tab === "open") renderOpen(idx);
   if (S.tab === "mine") renderMine(idx);
   if (S.tab === "how") renderHow();
-  if (S.tab === "admin") renderAdmin(idx);
+  if (S.tab === "admin" && B && S.loaded) renderAdmin(idx);
   renderFooter();
 }
 
@@ -196,7 +197,13 @@ function renderNotice() {
   let h = S.notice ? `<p class="notice" role="status">${esc(S.notice)}</p>` : "";
   if (B && B.mode === "live" && !S.me && S.loaded)
     h += `<p class="notice info">You're viewing the board. <button class="btn" id="notice-signin">Sign in</button> to take a lane and see who's coming.</p>`;
+  if (S.noAdmin && S.me && !S.me.isAdmin)
+    h += `<p class="notice info">This board doesn't have an admin yet. If you're the organizer, <button class="btn" id="claim-admin">Claim admin</button></p>`;
   $("notice").innerHTML = h;
+  const ca = $("claim-admin"); if (ca) ca.onclick = () => act(async () => {
+    const ok = await B.claimAdmin(); S.noAdmin = false;
+    if (!ok) throw Object.assign(new Error(), { friendly: "Someone else already claimed admin." });
+  }, "You're the admin now. Check the Admin tab.");
   const b = $("notice-signin"); if (b) b.onclick = openSignIn;
 }
 
@@ -207,7 +214,7 @@ function renderTabs(idx) {
   const open = openSpots(idx).reduce((a, d) => a + d.shifts.reduce((b, s) => b + s.open, 0), 0);
   $("t-open").innerHTML = `Open spots${open ? `<span class="count">${open}</span>` : ""}`;
   $("t-admin").hidden = !isAdmin();
-  if (S.tab === "admin" && !isAdmin()) S.tab = "month";
+  if (S.tab === "admin" && S.loaded && !isAdmin()) S.tab = "month";
   for (const t of TABS) {
     $("t-" + t).setAttribute("aria-selected", S.tab === t ? "true" : "false");
     $("v-" + t).hidden = S.tab !== t;
@@ -450,12 +457,46 @@ function renderAdmin(idx) {
   else h += `<div class="tw"><table class="roster"><thead><tr><th>Volunteer</th><th class="n">Shifts</th><th class="n">Hours</th>${S.groups.map((g, i) => `<th class="n"><span class="blk g${i}">${LETTERS[i]}</span></th>`).join("")}</tr></thead><tbody>`
     + st.people.map((p) => `<tr><td>${esc(p.name)}</td><td class="n">${p.shifts}</td><td class="n">${p.hours}</td>${p.g.map((n) => `<td class="n">${n || "·"}</td>`).join("")}</tr>`).join("")
     + `</tbody></table></div>`;
+  h += `<h2>People &amp; admins</h2><div id="people">${peopleTable()}</div>`;
   if (B.mode === "preview") h += `<p class="hint">Preview mode shows demo volunteers. <button class="linkbtn" id="reset">Reset demo data</button></p>`;
   $("v-admin").innerHTML = h + `</div>`;
   $("csv").onclick = () => downloadCsv(idx);
   $("print").onclick = () => window.print();
   const rs = $("reset"); if (rs) rs.onclick = () => { if (confirm("Reset all preview data on this device?")) B.resetDemo(); };
   $("v-admin").querySelectorAll("[data-view]").forEach((b) => b.onclick = () => { S.sel = b.dataset.view; setTab("month"); });
+  wirePeople();
+  if (S.people === undefined) loadPeople();
+}
+async function loadPeople() {
+  S.people = null;
+  try { S.people = await B.listPeople(); } catch (e) { S.people = { error: (e && e.friendly) || "Couldn't load people." }; }
+  if (S.tab === "admin") { $("people").innerHTML = peopleTable(); wirePeople(); }
+}
+function peopleTable() {
+  const P = S.people;
+  if (P === undefined || P === null) return `<p class="hint">Loading…</p>`;
+  if (P.error) return `<p class="notice">${esc(P.error)}</p>`;
+  const q = (S.peopleQuery || "").toLowerCase();
+  const list = P.filter((p) => !q || (p.name + " " + p.email).toLowerCase().includes(q));
+  return `<p class="hint" style="margin:0 0 10px">Everyone who has signed in. Admins can see this tab, remove sign-ups, and rename groups. <input id="people-q" placeholder="Search name or email" value="${esc(S.peopleQuery || "")}" style="margin-left:6px;font:inherit;font-size:13px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)"></p>`
+    + `<div class="tw"><table class="roster"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>`
+    + list.map((p) => {
+      const self = S.me && p.id === S.me.id;
+      const btn = self ? `<span class="hint" style="margin:0">You</span>`
+        : `<button class="btn ${p.isAdmin ? "quiet" : "ghost"} sm" data-admin="${esc(p.id)}" data-on="${p.isAdmin ? 0 : 1}" data-name="${esc(p.name || p.email)}">${p.isAdmin ? "Remove admin" : "Make admin"}</button>`;
+      return `<tr><td>${esc(p.name || "—")}</td><td>${esc(p.email)}</td><td>${p.isAdmin ? "<b>Admin</b>" : "Volunteer"}</td><td style="text-align:right">${btn}</td></tr>`;
+    }).join("") + `</tbody></table></div>`;
+}
+function wirePeople() {
+  const q = $("people-q");
+  if (q) q.oninput = () => { S.peopleQuery = q.value; const pos = q.selectionStart; $("people").innerHTML = peopleTable(); wirePeople(); const n = $("people-q"); n.focus(); n.setSelectionRange(pos, pos); };
+  document.querySelectorAll("[data-admin]").forEach((b) => b.onclick = async () => {
+    const on = b.dataset.on === "1", name = b.dataset.name;
+    if (!confirm(on ? `Make ${name} an admin? They'll be able to see everyone's email and manage the board.` : `Remove admin access from ${name}?`)) return;
+    try { await B.setAdmin(b.dataset.admin, on); toast(on ? `${name} is now an admin.` : `${name} is no longer an admin.`); }
+    catch (e) { toast((e && e.friendly) || "Couldn't change that."); }
+    loadPeople();
+  });
 }
 function downloadCsv(idx) {
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;

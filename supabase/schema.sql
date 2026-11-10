@@ -116,6 +116,50 @@ do $$ begin
   alter publication supabase_realtime add table public.settings;
 exception when duplicate_object then null; end $$;
 
--- ---------- make yourself an admin (run after you sign in once) ----------
+-- ---------- admin management (used by the Admin tab) ----------
+-- Admins can see everyone's name + email and promote/demote other admins.
+create or replace function public.admin_people()
+returns table (id uuid, name text, email text, is_admin boolean, created_at timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Admins only' using errcode = '42501'; end if;
+  return query
+    select p.id, p.name, u.email::text, p.is_admin, p.created_at
+    from public.profiles p join auth.users u on u.id = p.id
+    order by p.created_at;
+end $$;
+
+create or replace function public.set_admin(target uuid, make_admin boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Admins only' using errcode = '42501'; end if;
+  if target = auth.uid() and not make_admin then
+    raise exception 'You can''t remove your own admin access' using errcode = '42501';
+  end if;
+  update public.profiles set is_admin = make_admin where id = target;
+end $$;
+
+-- First person to sign in on a brand-new board can claim admin. Does nothing once an admin exists.
+create or replace function public.claim_first_admin()
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return false; end if;
+  perform pg_advisory_xact_lock(4242);
+  if exists (select 1 from public.profiles where is_admin) then return false; end if;
+  update public.profiles set is_admin = true where id = auth.uid();
+  return true;
+end $$;
+
+create or replace function public.has_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where is_admin)
+$$;
+
+revoke execute on function public.admin_people(), public.set_admin(uuid, boolean),
+  public.claim_first_admin() from public, anon;
+grant execute on function public.admin_people(), public.set_admin(uuid, boolean),
+  public.claim_first_admin(), public.has_admin() to authenticated;
+
+-- ---------- manual fallback: make someone an admin by email ----------
 -- update public.profiles set is_admin = true
 --   where id = (select id from auth.users where email = 'you@example.com');
