@@ -136,12 +136,12 @@ function renderWho() {
   const pill = !B ? `<span class="pill"><i></i>Connecting…</span>` : B.mode === "preview" ? `<span class="pill"><i></i>Preview · demo</span>` : `<span class="pill live"><i></i>Live</span>`;
   let me = "";
   if (B && B.mode === "live" && !S.me) me = `<button class="btn" data-act="signin">Sign in</button>`;
-  else if (S.me) { const e = myEmp(); me = `<span class="chip"><span class="av"><i class="tc0" style="background:var(--accent)">${esc(initials(e && e.name))}</i></span>${esc((e && e.name) || "You")}</span>` + (B.mode === "live" ? `<button class="linkbtn" data-act="signout">Sign out</button>` : ""); }
+  else if (S.me) { const e = myEmp(); me = `<span class="chip"><span class="av"><i style="background:var(--accent);color:var(--accent-ink)">${esc(initials(e && e.name))}</i></span>${esc((e && e.name) || "You")}</span>` + (B.mode === "live" ? `<button class="linkbtn" data-act="signout">Sign out</button>` : ""); }
   $("who").innerHTML = pill + me;
 }
 function renderTabs() {
   const signedIn = !B || B.mode === "preview" || S.me;
-  $("tabs").hidden = !signedIn;
+  $("tabs").parentElement.hidden = !signedIn;
   const emp = myEmp();
   $("tabs").innerHTML = TABS.filter((t) => !t.admin || isAdmin()).map((t) => {
     let count = "";

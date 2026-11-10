@@ -1,10 +1,10 @@
 {
-  "name": "Magnolia Shift Board",
-  "short_name": "Shifts",
+  "name": "Magnolia DSP Schedule",
+  "short_name": "Magnolia",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#F2F6F3",
-  "theme_color": "#1F4D3D",
+  "background_color": "#FAF8F1",
+  "theme_color": "#29572D",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
