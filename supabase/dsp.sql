@@ -245,3 +245,64 @@ insert into public.homes (name, cluster, location, residents, sort)
 select 'Home ' || n, (array['A','B','C','D'])[((n - 1) / 5) + 1], case when n <= 5 then 'Campus' else 'Community' end, 6 + (n % 3), n
 from generate_series(1, 20) n
 where not exists (select 1 from public.homes);
+
+-- ---------- v2.1: weekly publishing (replaces monthly locks for DSP sign-ups) ----------
+-- DSPs pick shifts up to 3 weeks out; HR publishes one week at a time, which locks it and emails the schedule.
+alter table public.settings add column if not exists locked_weeks text[] not null default '{}';
+
+create or replace function public.week_start(d date) returns date
+language sql immutable as $$ select d - (extract(isodow from d)::int - 1) $$;
+
+create or replace function public.week_locked(d date) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.week_start(d)::text = any (coalesce((select locked_weeks from public.settings where id = 1), '{}'))
+$$;
+grant execute on function public.week_start(date), public.week_locked(date) to authenticated;
+
+drop policy if exists "take own shift" on public.dsp_signups;
+create policy "take own shift" on public.dsp_signups for insert to authenticated with check (
+  public.is_admin() or (
+    employee_id = public.my_employee_id()
+    and shift_date >= public.org_today()
+    and shift_date < public.week_start(public.org_today()) + 21
+    and not public.week_locked(shift_date)
+    and team_id = any ((select teams from public.employees where id = public.my_employee_id())::int[])
+  ));
+drop policy if exists "drop own shift" on public.dsp_signups;
+create policy "drop own shift" on public.dsp_signups for delete to authenticated using (
+  public.is_admin() or (
+    employee_id = public.my_employee_id()
+    and shift_date >= public.org_today()
+    and not public.week_locked(shift_date)
+  ));
+
+create or replace function public.hr_set_week_lock(p_week text, p_locked boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'HR only' using errcode = '42501'; end if;
+  update public.settings set locked_weeks =
+    case when p_locked then array(select distinct unnest(locked_weeks || p_week))
+         else array_remove(locked_weeks, p_week) end
+  where id = 1;
+end $$;
+revoke execute on function public.hr_set_week_lock(text, boolean) from public, anon;
+grant execute on function public.hr_set_week_lock(text, boolean) to authenticated;
+
+-- a week's schedule for the "Publish & email" step (server only)
+create or replace function public.dsp_week_schedule(ws date)
+returns table (email text, name text, shift_date date, block smallint, team text)
+language sql stable security definer set search_path = public as $$
+  select u.email::text, e.name, s.shift_date, s.block, t.name
+  from public.dsp_signups s
+  join public.employees e on e.id = s.employee_id
+  join auth.users u on u.id = e.user_id
+  join public.teams t on t.id = s.team_id
+  where s.shift_date between ws and ws + 6 and u.email is not null
+  order by u.email, s.shift_date, s.block
+$$;
+revoke execute on function public.dsp_week_schedule(date) from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.dsp_week_schedule(date) to service_role;
+  end if;
+end $$;

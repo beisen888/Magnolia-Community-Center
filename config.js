@@ -25,13 +25,9 @@ window.MAGNOLIA = {
     { label: "8 PM–12 AM", start: 20, end: 24, night: true },
   ],
 
-  // Pay ladder from the proposal ($/hour).
-  pay: { "DSP I": 16, "DSP II": 16.5, "Lead DSP": 17 },
-  cnaBonus: 0.5,
-  nightBonus: 0.5, // 8 PM – 8 AM
 
   weekStartsOn: 1, // 1 = Monday
-  availabilityDueDay: 20, // DSPs pick next month's shifts by the 20th
-  schedulePublishDay: 28, // HR locks/publishes next month by the 28th
+  signupWeeksAhead: 2, // DSPs can pick shifts this week + the next 2 weeks
+  // HR publishes one week at a time ("Publish & email"): it locks that week and emails each DSP their schedule.
   timezone: "America/Chicago",
 };

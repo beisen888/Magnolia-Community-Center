@@ -7,7 +7,7 @@
  *   homes:     [{ id, name, cluster, location, residents, sort }]
  *   employees: [{ id, userId, name, email, level, hireDate, weeklyTarget, hasLicense, hasCna, teams[], quizTeam, active, demo }]
  *   signups:   [{ id, employeeId, date, block, teamId }]
- *   settings:  { announcement, lockedMonths[] }
+ *   settings:  { announcement, lockedWeeks[] }
  */
 const SUPABASE_CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
@@ -109,7 +109,7 @@ function previewBackend(cfg) {
   const write = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (_) {} };
   const seed = () => {
     const teams = demoTeams(), employees = demoEmployees(today);
-    return { teams, homes: demoHomes(), employees, signups: demoSignups(employees, teams, today), settings: { announcement: "", lockedMonths: [] }, nextId: 100000, admins: {}, reminders: true };
+    return { teams, homes: demoHomes(), employees, signups: demoSignups(employees, teams, today), settings: { announcement: "", lockedWeeks: [] }, nextId: 100000, admins: {}, reminders: true };
   };
   let st = read() || seed(); write();
   let notify = () => {};
@@ -126,6 +126,7 @@ function previewBackend(cfg) {
     async init(onChange) { notify = onChange; },
     me() { const e = meEmp(); return { userId: "preview-me", email: e ? e.email : "", isAdmin: true, reminders: st.reminders !== false }; },
     async load(from, to) {
+      st.settings.lockedWeeks ||= [];
       return { teams: st.teams, homes: st.homes, employees: st.employees, settings: st.settings,
         signups: st.signups.filter((s) => s.date >= from && s.date <= to) };
     },
@@ -156,10 +157,11 @@ function previewBackend(cfg) {
     },
     async deleteHome(id) { st.homes = st.homes.filter((h) => h.id !== id); done(); },
     async saveAnnouncement(text) { st.settings.announcement = text; done(); },
-    async setLock(month, on) {
-      const s = new Set(st.settings.lockedMonths); on ? s.add(month) : s.delete(month);
-      st.settings.lockedMonths = [...s]; done();
+    async setWeekLock(week, on) {
+      const s = new Set(st.settings.lockedWeeks || []); on ? s.add(week) : s.delete(week);
+      st.settings.lockedWeeks = [...s]; done();
     },
+    async publishWeek(week) { await this.setWeekLock(week, true); return { preview: true, sent: 0, people: 0 }; },
     async wipeDemo() {
       const ids = new Set(st.employees.filter((e) => e.demo && e.userId !== "preview-me").map((e) => e.id));
       st.employees = st.employees.filter((e) => !ids.has(e.id));
@@ -181,7 +183,7 @@ async function supabaseBackend(cfg) {
     const code = error && error.code, m = (error && error.message) || "";
     if (code === "P0001") return friendlyError(m.endsWith(".") ? m : m + ".");
     if (code === "23505") return friendlyError("You already have a shift at that time.");
-    if (code === "42501" || /row-level security/i.test(m)) return friendlyError("Not allowed: you can only take future shifts on your own teams, and not in a month HR has locked.");
+    if (code === "42501" || /row-level security/i.test(m)) return friendlyError("Not allowed: you can only take future shifts on your own teams, and not in a week HR has published.");
     if (/JWT|session/i.test(m)) return friendlyError("Your sign-in expired. Please sign in again.");
     return friendlyError(m || "That didn't save. Check your connection and try again.");
   };
@@ -215,20 +217,20 @@ async function supabaseBackend(cfg) {
     },
     me() { return me; },
     async load(from, to) {
-      if (!me) return { teams: [], homes: [], employees: [], signups: [], settings: { announcement: "", lockedMonths: [] } };
+      if (!me) return { teams: [], homes: [], employees: [], signups: [], settings: { announcement: "", lockedWeeks: [] } };
       const [t, h, e, s, set] = await Promise.all([
         sb.from("teams").select("*").order("sort"),
         sb.from("homes").select("*").order("sort"),
         sb.from("employees").select("*").order("name"),
         sb.from("dsp_signups").select("id,employee_id,shift_date,block,team_id").gte("shift_date", from).lte("shift_date", to),
-        sb.from("settings").select("announcement,locked_months").eq("id", 1).maybeSingle(),
+        sb.from("settings").select("announcement,locked_weeks").eq("id", 1).maybeSingle(),
       ]);
       const err = t.error || h.error || e.error || s.error;
       if (err) throw fail(err);
       return {
         teams: t.data.map(toTeam), homes: h.data, employees: e.data.map(toEmp),
         signups: s.data.map((r) => ({ id: r.id, employeeId: r.employee_id, date: r.shift_date, block: r.block, teamId: r.team_id })),
-        settings: { announcement: (set.data && set.data.announcement) || "", lockedMonths: (set.data && set.data.locked_months) || [] },
+        settings: { announcement: (set.data && set.data.announcement) || "", lockedWeeks: (set.data && set.data.locked_weeks) || [] },
       };
     },
     async take(date, block, teamId, employeeId) {
@@ -268,7 +270,15 @@ async function supabaseBackend(cfg) {
     },
     async deleteHome(id) { await run(sb.from("homes").delete().eq("id", id)); },
     async saveAnnouncement(text) { await run(sb.from("settings").update({ announcement: text }).eq("id", 1)); },
-    async setLock(month, on) { await rpc("hr_set_lock", { p_month: month, p_locked: on }); ping(); },
+    async setWeekLock(week, on) { await rpc("hr_set_week_lock", { p_week: week, p_locked: on }); ping(); },
+    async publishWeek(week) {
+      await rpc("hr_set_week_lock", { p_week: week, p_locked: true }); ping();
+      const { data } = await sb.auth.getSession();
+      const r = await fetch("/api/publish", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session ? data.session.access_token : ""}` }, body: JSON.stringify({ week }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw friendlyError(`Week locked, but emails didn't send: ${j.error || r.status}`);
+      return j;
+    },
     async wipeDemo() { const n = await rpc("hr_wipe_demo"); ping(); return n; },
     async signIn(email) {
       const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });

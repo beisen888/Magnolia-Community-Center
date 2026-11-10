@@ -23,7 +23,6 @@ const weekStart = (s) => { const d = parse(s); const back = (d.getDay() - CFG.we
 const fmt = (s, o) => parse(s).toLocaleDateString("en-US", o);
 const short = (s) => fmt(s, { weekday: "short", month: "short", day: "numeric" });
 const long = (s) => fmt(s, { weekday: "long", month: "long", day: "numeric" });
-const money = (n) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const initials = (n) => (n || "?").split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 const hShort = (h) => (h % 24 === 0 ? "12a" : h === 12 ? "12p" : h < 12 ? h + "a" : (h - 12) + "p");
 const isNight = (b) => !!BLOCKS[b].night;
@@ -34,7 +33,7 @@ const S = {
   tab: "home", y: NOW.getFullYear(), m: NOW.getMonth(), sel: TODAY, weekRef: TODAY, hrWeekRef: TODAY, hrSub: "coverage",
   myTeamsOnly: true, hrTools: false, quiz: { i: 0, answers: [] }, editEmp: null, editTeam: null, peopleQ: "",
   me: null, mode: "connecting", loaded: false, notice: "", noAdmin: undefined, admins: null,
-  teams: [], homes: [], employees: [], signups: [], settings: { announcement: "", lockedMonths: [] },
+  teams: [], homes: [], employees: [], signups: [], settings: { announcement: "", lockedWeeks: [] },
 };
 let B = null;
 
@@ -44,16 +43,18 @@ const empById = (id) => S.employees.find((e) => e.id === id);
 const activeTeams = () => S.teams.filter((t) => t.active !== false).sort((a, b) => a.sort - b.sort);
 const myEmp = () => (S.me ? S.employees.find((e) => e.userId === S.me.userId) : null);
 const isAdmin = () => !!(S.me && S.me.isAdmin);
-const isLocked = (date) => S.settings.lockedMonths.includes(monthKey(date));
+const isLocked = (date) => (S.settings.lockedWeeks || []).includes(weekStart(date));
+const lastPickDay = () => addDays(weekStart(TODAY), 7 * (CFG.signupWeeksAhead + 1) - 1);
+const leadOf = (emp) => emp && emp.level === "Lead DSP";
 const shiftsOn = (date, block, teamId) => S.signups.filter((s) => s.date === date && s.block === block && (teamId == null || s.teamId === teamId));
 const empShifts = (empId, from, to) => S.signups.filter((s) => s.employeeId === empId && s.date >= from && s.date <= to).sort((a, b) => (a.date + a.block < b.date + b.block ? -1 : 1));
-const rate = (emp, block) => (CFG.pay[emp.level] || CFG.pay["DSP I"]) + (emp.hasCna ? CFG.cnaBonus : 0) + (isNight(block) ? CFG.nightBonus : 0);
 const weekHours = (empId, ws) => empShifts(empId, ws, addDays(ws, 6)).length * 4;
 const teamClass = (t) => "tc" + ((t && t.color) || 0);
 function canTake(emp, date, block, team) {
   if (!emp || !team) return false;
   if (date < TODAY || isLocked(date) || !team.needs[block]) return false;
   if (date === TODAY && BLOCKS[block].start <= NOW.getHours()) return false;
+  if (date > lastPickDay()) return false;
   if (!emp.teams.includes(team.id)) return false;
   if (S.signups.some((s) => s.employeeId === emp.id && s.date === date && s.block === block)) return false;
   return shiftsOn(date, block, team.id).length < team.needs[block];
@@ -171,7 +172,6 @@ function viewHome() {
   if (!emp) return `<div class="empty"><h3>Setting up your profile…</h3>Refresh in a moment.</div>`;
   const ws = weekStart(S.weekRef), we = addDays(ws, 6);
   const mine = empShifts(emp.id, ws, we), hours = mine.length * 4, target = emp.weeklyTarget || 40;
-  const pay = mine.reduce((a, s) => a + rate(emp, s.block) * 4, 0), nightH = mine.filter((s) => isNight(s.block)).length * 4;
   const scale = Math.max(target, hours, 1);
   const perTeam = {}; mine.forEach((s) => (perTeam[s.teamId] = (perTeam[s.teamId] || 0) + 4));
   const status = hours >= target ? (hours > target ? `<span class="badge warn">${hours - target} hrs over</span>` : `<span class="badge good">Target met</span>`) : `<span class="badge">${target - hours} hrs to go</span>`;
@@ -186,10 +186,9 @@ function viewHome() {
   // week progress
   h += `<section class="card week"><div class="sec-title"><h3>Week of ${fmt(ws, { month: "short", day: "numeric" })} – ${fmt(we, { month: "short", day: "numeric" })}</h3>
     <div class="weeknav"><button data-act="week" data-d="-7" aria-label="Previous week">‹</button><button class="linkbtn" data-act="week" data-d="0">This week</button><button data-act="week" data-d="7" aria-label="Next week">›</button></div></div>
-    <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap"><div class="bignum">${hours}<small> / ${target} hrs</small></div>${status}</div>
+    <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap"><div class="bignum">${hours}<small> / ${target} hrs</small></div>${status}<span class="muted" style="font-size:14px;margin-left:auto">${mine.length} shift${mine.length === 1 ? "" : "s"}${isLocked(ws) ? " · final schedule" : ""}</span></div>
     <div class="progress" role="img" aria-label="${hours} of ${target} hours scheduled">${Object.entries(perTeam).map(([tid, n]) => { const t = teamById(+tid); return `<span class="${teamClass(t)} tbg" style="width:${(n / scale) * 100}%" title="${esc(t ? t.shortName : "")}: ${n}h"></span>`; }).join("")}<i class="target" style="left:calc(${(target / scale) * 100}% - 1px)"></i></div>
     <div class="progress-key">${Object.entries(perTeam).map(([tid, n]) => { const t = teamById(+tid); return `<span class="${teamClass(t)}"><i></i>${esc(t ? t.shortName : "")} ${n}h</span>`; }).join("") || "<span>No shifts this week yet</span>"}</div>
-    <div class="statrow"><div class="stat"><div class="v">${mine.length}</div><div class="k">4-hr shifts</div></div><div class="stat"><div class="v">${money(pay)}</div><div class="k">est. pay before tax</div></div><div class="stat"><div class="v">${money(rate(emp, 2))}<small class="muted">/hr</small></div><div class="k">your day rate${nightH ? ` · +$${CFG.nightBonus.toFixed(2)} nights` : ""}</div></div></div>
     <div class="days7">${[0, 1, 2, 3, 4, 5, 6].map((i) => { const d = addDays(ws, i), ss = mine.filter((s) => s.date === d);
       return `<button class="d7${d === TODAY ? " today" : ""}" data-act="openday" data-date="${d}"><span class="dn">${fmt(d, { weekday: "short" })} ${parse(d).getDate()}</span>${ss.length ? ss.map((s) => { const t = teamById(s.teamId); return `<span class="bar ${teamClass(t)}">${hShort(BLOCKS[s.block].start)}–${hShort(BLOCKS[s.block].end)}</span>`; }).join("") : `<span class="off">Off</span>`}</button>`; }).join("")}</div></section>`;
   // open shifts to fill the week
@@ -233,18 +232,16 @@ function nextShift(emp) {
     <div class="muted" style="font-size:14px">${esc(t ? t.name : "")}${pair ? " · 8-hour day" : ""}</div>${t ? rotationHtml(t, s.block) : ""}</section>`;
 }
 function cycleCard() {
-  const d = NOW.getDate(), next = iso(new Date(NOW.getFullYear(), NOW.getMonth() + 1, 1)), nk = monthKey(next);
-  const locked = S.settings.lockedMonths.includes(nk);
-  const due = `${parse(next).toLocaleDateString("en-US", { month: "long" })}`;
-  let msg;
-  if (locked) msg = `<b>${due} schedule is final.</b> Need a change? Ask your Lead DSP or HR.`;
-  else if (d <= CFG.availabilityDueDay) msg = `<b>Pick your ${due} shifts by the ${CFG.availabilityDueDay}th.</b> HR publishes the final schedule by the ${CFG.schedulePublishDay}th.`;
-  else msg = `<b>HR is finalizing ${due}.</b> Schedule out by the ${CFG.schedulePublishDay}th. You can still add open shifts until then.`;
-  return `<section class="card"><span class="eyebrow">Schedule cycle</span><p style="margin:6px 0 0;font-size:14px">${msg}</p></section>`;
+  const thisW = weekStart(TODAY), nextW = addDays(thisW, 7), last = lastPickDay();
+  const nextLocked = isLocked(nextW);
+  const msg = nextLocked
+    ? `<b>Next week's schedule is final</b> and was emailed to you. Pick shifts through ${fmt(last, { month: "short", day: "numeric" })}.`
+    : `<b>Pick your shifts through ${fmt(last, { month: "short", day: "numeric" })}.</b> HR emails the final schedule for each week before it starts.`;
+  return `<section class="card"><span class="eyebrow">How scheduling works</span><p style="margin:6px 0 0;font-size:15px">${msg}</p></section>`;
 }
 function profileCard(emp) {
   return `<section class="card"><span class="eyebrow">My profile</span>
-    <div class="checks" style="margin:10px 0"><label><input type="checkbox" data-act="mylicense" ${emp.hasLicense ? "checked" : ""}> I have a driver's license</label><label><input type="checkbox" data-act="mycna" ${emp.hasCna ? "checked" : ""}> CNA certified (+$${CFG.cnaBonus.toFixed(2)}/hr)</label>
+    <div class="checks" style="margin:10px 0"><label><input type="checkbox" data-act="mylicense" ${emp.hasLicense ? "checked" : ""}> I have a driver's license</label><label><input type="checkbox" data-act="mycna" ${emp.hasCna ? "checked" : ""}> CNA certified</label>
     <label><input type="checkbox" data-act="remind" ${S.me && S.me.reminders !== false ? "checked" : ""}> Email me the night before a shift</label></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-act="ics">Add my shifts to my phone calendar</button><button class="linkbtn" data-act="rename">Change name</button></div></section>`;
 }
@@ -265,22 +262,22 @@ function viewSchedule() {
       <span class="cov${pct < 0.7 ? " low" : ""}" title="${Math.round(pct * 100)}% staffed"><span style="width:${pct * 100}%"></span></span></button>`;
   }
   return `<div class="grid2"><div><div class="calhead"><button class="iconbtn" data-act="month" data-d="-1" aria-label="Previous month">‹</button><h2>${monthName(mk)}</h2><button class="iconbtn" data-act="month" data-d="1" aria-label="Next month">›</button>
-    ${isLocked(mk + "-01") ? `<span class="badge good">Published</span>` : `<span class="badge">Open for sign-up</span>`}</div>
+</div>
     <div class="dow">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((x) => `<div>${x}</div>`).join("")}</div><div class="cal">${cal}</div>
-    <p class="muted" style="font-size:12.5px;margin-top:10px">Colored tags are your shifts. The bar under each day shows how fully staffed it is (orange = short).</p></div>
+    <p class="muted" style="font-size:13px;margin-top:10px">Colored tags are your shifts. The bar under each day shows staffing (orange = short). You can pick shifts through ${fmt(lastPickDay(), { month: "short", day: "numeric" })}.</p></div>
     <aside class="card day" id="day">${dayPanel(emp)}</aside></div>`;
 }
 function dayPanel(emp) {
   const ds = S.sel, past = ds < TODAY, locked = isLocked(ds);
   const hr = isAdmin() && S.hrTools;
   const teams = activeTeams().filter((t) => hr || !S.myTeamsOnly || !emp || emp.teams.includes(t.id));
-  let h = `<div class="sec-title"><div><h2>${long(ds)}</h2><span class="muted" style="font-size:13px">${past ? "Past day · view only" : locked ? "Published schedule · changes go through HR" : "Tap 4 hrs for one block, 8 hrs for two in a row"}</span></div>
+  let h = `<div class="sec-title"><div><h2>${long(ds)}</h2><span class="muted" style="font-size:13px">${past ? "Past day · view only" : locked ? "Final schedule (published) · changes go through your Lead DSP or HR" : ds > lastPickDay() ? "Not open for sign-up yet" : "Tap 4 hrs for one block, 8 hrs for two in a row"}</span></div>
     <span class="checks">${emp && !hr ? `<label><input type="checkbox" data-act="myonly" ${S.myTeamsOnly ? "checked" : ""}> My teams only</label>` : ""}${isAdmin() ? `<label><input type="checkbox" data-act="hrtools" ${S.hrTools ? "checked" : ""}> HR tools</label>` : ""}</span></div>`;
   if (!teams.length) return h + `<div class="empty">You're not on a team yet. <button class="linkbtn" data-act="tab" data-tab="quiz">Find your team</button></div>`;
   for (let b = 0; b < 6; b++) {
     const here = teams.filter((t) => t.needs[b] > 0); if (!here.length) continue;
     const myHere = emp && S.signups.find((s) => s.employeeId === emp.id && s.date === ds && s.block === b);
-    h += `<div class="blockrow"><div class="bl">${BLOCKS[b].label}<br>${isNight(b) ? `<span class="badge night">Overnight +$${CFG.nightBonus.toFixed(2)}</span>` : ""}</div><div class="slots">`;
+    h += `<div class="blockrow"><div class="bl">${BLOCKS[b].label}<br>${isNight(b) ? `<span class="badge night">Overnight</span>` : ""}</div><div class="slots">`;
     for (const t of here) {
       const ppl = shiftsOn(ds, b, t.id), need = t.needs[b], amMine = myHere && myHere.teamId === t.id, onTeam = emp && emp.teams.includes(t.id);
       let acts = "";
@@ -293,8 +290,8 @@ function dayPanel(emp) {
         const free = S.employees.filter((e) => e.active !== false && e.teams.includes(t.id) && !S.signups.some((s) => s.employeeId === e.id && s.date === ds && s.block === b));
         if (free.length) acts += ` <select data-assign="${ds}|${b}|${t.id}" aria-label="Assign someone"><option value="">Assign…</option>${free.map((e) => `<option value="${esc(e.id)}">${esc(e.name || "Unnamed")}</option>`).join("")}</select>`;
       }
-      h += `<div class="slot ${teamClass(t)}${amMine ? " mine" : ""}${emp && !onTeam && !hr ? " dim" : ""}"><span class="nm">${esc(t.shortName)}</span><span class="fill${ppl.length >= need ? " full" : ""}">${ppl.length}/${need}</span>${acts}
-        ${ppl.length ? `<div class="ppl">${ppl.map((s) => { const e = empById(s.employeeId); return `<span class="av${emp && s.employeeId === emp.id ? " me" : ""}"><i class="${teamClass(t)}">${esc(initials(e && e.name))}</i>${esc(e ? e.name.split(" ")[0] : "?")}${hr ? `<button data-act="remove" data-id="${s.id}" data-name="${esc(e ? e.name : "")}" aria-label="Remove">×</button>` : ""}</span>`; }).join("")}</div>` : ""}</div>`;
+      h += `<div class="slot ${teamClass(t)}${amMine ? " mine" : ""}${emp && !onTeam && !hr ? " dim" : ""}"><span class="nm">${esc(t.shortName)}</span><span class="fill${ppl.length >= need ? " full" : ""}">${ppl.length}/${need}</span>${hr && ppl.length && !ppl.some((s) => leadOf(empById(s.employeeId))) ? `<span class="badge warn">No Lead DSP</span>` : ""}${acts}
+        ${ppl.length ? `<div class="ppl">${ppl.map((s) => { const e = empById(s.employeeId); return `<span class="av${emp && s.employeeId === emp.id ? " me" : ""}"><i class="${teamClass(t)}">${esc(initials(e && e.name))}</i>${esc(e ? e.name.split(" ")[0] : "?")}${leadOf(e) ? ` <b class="lead">Lead</b>` : ""}${hr ? `<button data-act="remove" data-id="${s.id}" data-name="${esc(e ? e.name : "")}" aria-label="Remove">×</button>` : ""}</span>`; }).join("")}</div>` : ""}</div>`;
     }
     h += `</div></div>`;
   }
@@ -304,20 +301,21 @@ function dayPanel(emp) {
 /* ---------- TEAMS & HOMES ---------- */
 function viewTeams() {
   const emp = myEmp();
-  let h = `<div class="sec-title"><h2>Activity teams</h2><span class="muted" style="font-size:13px">Each team: 1 Lead DSP, 2 DSP II, 1–2 DSP I</span></div><div class="grid3">`;
+  let h = `<div class="sec-title"><h2>Activity teams</h2><span class="muted" style="font-size:14px">Each team has a Lead DSP, DSP IIs and DSP Is, assigned by HR</span></div><div class="grid3">`;
   for (const t of activeTeams()) {
     const on = emp && emp.teams.includes(t.id), members = S.employees.filter((e) => e.active !== false && e.teams.includes(t.id)).length;
     h += `<article class="card team ${teamClass(t)}"><h3>${esc(t.name)}</h3><p class="muted" style="margin:0;font-size:13.5px">${esc(t.description)}</p>
       <div class="acts">${t.activities.map((a) => `<span>${esc(a)}</span>`).join("")}</div>
+      ${roster(t)}
       <div><span class="eyebrow">Works</span><div class="blocksmini" style="margin-top:4px">${BLOCKS.map((b, i) => `<span class="${t.needs[i] ? "on" : ""}" title="${b.label}: ${t.needs[i]} needed">${hShort(b.start)}</span>`).join("")}</div></div>
       <div class="foot"><span class="muted" style="font-size:12.5px">${members} DSPs${t.needsLicense ? " · license required" : ""}</span>
       ${emp ? (on ? `<button class="btn ghost sm" data-act="leave" data-team="${t.id}">Leave team</button>` : `<button class="btn sm" data-act="join" data-team="${t.id}">Join team</button>`) : ""}</div></article>`;
   }
   h += `</div>`;
-  // career ladder
+  // roles
   const lvl = emp ? emp.level : "";
-  h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>Career ladder</h2><span class="muted" style="font-size:13px">+$${CFG.cnaBonus.toFixed(2)}/hr with CNA · +$${CFG.nightBonus.toFixed(2)}/hr overnight (8 PM–8 AM) · +$1/hr merit month for core-value awards</span></div>
-    <div class="ladder">${[["DSP I", "First 6 months. Shadow shifts, learn your team's routine."], ["DSP II", "After 6 months. Helps run activities and works with volunteers."], ["Lead DSP", "After 1 year (bachelor's or CNA). Leads the team, mentors DSP I, weekly check-ins."]].map(([n, d]) => `<div class="rung${n === lvl ? " me" : ""}"><span class="eyebrow">${n}${n === lvl ? " · you" : ""}</span><div class="v">$${CFG.pay[n].toFixed(2)}<small class="muted" style="font-size:13px">/hr</small></div><div class="muted" style="font-size:13px">${d}</div></div>`).join("")}</div></section>`;
+  h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>Team roles</h2><span class="muted" style="font-size:14px">HR assigns each person's role</span></div>
+    <div class="ladder">${[["Lead DSP", "Runs the team's shifts, mentors DSP Is, leads shadow shifts and holds a weekly check-in."], ["DSP II", "Experienced DSP (6+ months). Helps run activities and works with volunteers."], ["DSP I", "First 6 months. Learns the team's routine with shadow shifts and a Lead DSP as mentor."]].map(([n, d]) => `<div class="rung${n === lvl ? " me" : ""}"><span class="eyebrow">${n === lvl ? "Your role" : "Role"}</span><div class="v" style="font-size:20px">${n}</div><div class="muted" style="font-size:14px">${d}</div></div>`).join("")}</div></section>`;
   // homes by cluster
   h += `<section style="margin-top:18px"><div class="sec-title"><h2>Homes by cluster</h2><span class="muted" style="font-size:13px">${S.homes.length} homes · ${S.homes.reduce((a, x) => a + (+x.residents || 0), 0)} residents</span></div><div class="clusters">`;
   for (const c of "ABCD") {
@@ -338,6 +336,12 @@ function viewTeams() {
   }
   h += `</tbody></table></div><p class="muted" style="font-size:12px;margin:8px 0 0">Illustrative. Every home also keeps its own continuous residential coverage.</p></section>`;
   return h;
+}
+
+function roster(t) {
+  const ppl = S.employees.filter((e) => e.active !== false && e.teams.includes(t.id));
+  const row = (lvl) => { const xs = ppl.filter((e) => e.level === lvl); return `<div class="rosterrow"><span class="eyebrow">${lvl}</span><span>${xs.length ? xs.map((e) => esc(e.name || "Unnamed")).join(", ") : '<span class="muted">Open</span>'}</span></div>`; };
+  return `<div class="roster">${row("Lead DSP")}${row("DSP II")}${row("DSP I")}</div>`;
 }
 
 /* ---------- QUIZ ---------- */
@@ -390,12 +394,16 @@ function hrCoverage() {
   for (const d of days) for (const t of teams) for (let b = 0; b < 6; b++) { const n = t.needs[b], c = Math.min(shiftsOn(d, b, t.id).length, n); need += n; have += c; if (c < n) shortSlots += n - c; }
   const emps = S.employees.filter((e) => e.active !== false), hrs = emps.map((e) => ({ e, h: weekHours(e.id, ws) }));
   const under = hrs.filter((x) => x.h < x.e.weeklyTarget).length, over = hrs.filter((x) => x.h > x.e.weeklyTarget).length;
-  const payroll = S.signups.filter((s) => s.date >= ws && s.date <= days[6]).reduce((a, s) => { const e = empById(s.employeeId); return a + (e ? rate(e, s.block) * 4 : 0); }, 0);
-  let h = `<div class="sec-title"><h2>Coverage</h2>${hrWeekNav()}</div><div class="cards">
+  let noLead = 0;
+  for (const d of days) for (const t of teams) for (let b = 0; b < 6; b++) { const p = shiftsOn(d, b, t.id); if (p.length && !p.some((s) => leadOf(empById(s.employeeId)))) noLead++; }
+  const pub = isLocked(ws);
+  let h = `<div class="sec-title"><h2>Coverage</h2>${hrWeekNav()}</div>
+    <div class="card publish${pub ? " done" : ""}"><div><b>${pub ? "Published" : "Not published yet"}</b><span class="muted"> · week of ${fmt(ws, { month: "short", day: "numeric" })}</span><div class="muted" style="font-size:14px">${pub ? "DSPs can't change this week. Everyone with a login was emailed their schedule." : "When coverage looks right, publish to lock the week and email every DSP their final schedule."}</div></div>
+    ${pub ? `<button class="btn quiet" data-act="unpublish" data-w="${ws}">Reopen week</button>` : `<button class="btn lg" data-act="publish" data-w="${ws}">Publish &amp; email schedule</button>`}</div><div class="cards">
     <div class="card kpi"><div class="v">${need ? Math.round((have / need) * 100) : 0}%</div><div class="k">of needed shifts filled (${have}/${need})</div></div>
     <div class="card kpi${shortSlots ? " warn" : ""}"><div class="v">${shortSlots}</div><div class="k">open DSP slots this week</div></div>
     <div class="card kpi${under ? " warn" : ""}"><div class="v">${under}</div><div class="k">DSPs under their weekly target</div></div>
-    <div class="card kpi"><div class="v">${money(payroll)}</div><div class="k">scheduled payroll (est.)${over ? ` · ${over} over target` : ""}</div></div></div>`;
+    <div class="card kpi${noLead ? " warn" : ""}"><div class="v">${noLead}</div><div class="k">team shifts without a Lead DSP${over ? ` · ${over} DSPs over target` : ""}</div></div></div>`;
   h += `<div class="card tw"><table class="covgrid"><thead><tr><th>Block</th>${days.map((d) => `<th>${fmt(d, { weekday: "short", month: "numeric", day: "numeric" })}</th>`).join("")}</tr></thead><tbody>`;
   for (let b = 0; b < 6; b++) {
     const tb = teams.filter((t) => t.needs[b]); if (!tb.length) continue;
@@ -411,13 +419,13 @@ function hrPeople() {
   let h = `<div class="sec-title"><h2>Employees</h2>${hrWeekNav()}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><input id="peopleq" placeholder="Search name, email or level" value="${esc(S.peopleQ)}" style="flex:1;min-width:200px"><button class="btn" data-act="addemp">Add employee</button></div>`;
   if (S.editEmp) h += empForm(S.editEmp);
-  h += `<div class="tw"><table class="data"><thead><tr><th>Name</th><th>Level</th><th>Teams</th><th>Hours this week</th><th>Rate</th><th>Login</th><th></th></tr></thead><tbody>`;
+  h += `<div class="tw"><table class="data"><thead><tr><th>Name</th><th>Level</th><th>Teams</th><th>Hours this week</th><th>Login</th><th></th></tr></thead><tbody>`;
   for (const e of list) {
     const hrs = weekHours(e.id, ws), tgt = e.weeklyTarget || 0, admin = S.admins && e.userId && S.admins.includes(e.userId);
     h += `<tr${e.active === false ? ' style="opacity:.5"' : ""}><td><b>${esc(e.name || "Unnamed")}</b>${e.demo ? ' <span class="badge">demo</span>' : ""}${admin ? ' <span class="badge good">HR</span>' : ""}<br><span class="muted" style="font-size:12px">${esc(e.email)}${e.hasLicense ? " · license" : ""}${e.hasCna ? " · CNA" : ""}</span></td>
       <td>${esc(e.level)}</td><td>${e.teams.map((id) => { const t = teamById(id); return t ? `<span class="chip ${teamClass(t)}" style="margin:1px"><span class="dot tbg"></span>${esc(t.shortName)}</span>` : ""; }).join("") || '<span class="muted">none</span>'}</td>
       <td style="white-space:nowrap"><span class="minibar${hrs < tgt ? " low" : ""}"><span style="width:${Math.min(100, tgt ? (hrs / tgt) * 100 : 100)}%"></span></span><span class="mono">${hrs}/${tgt}</span></td>
-      <td class="n">${money(rate(e, 2))}</td><td>${e.userId ? "Yes" : '<span class="muted">No</span>'}</td>
+      <td>${e.userId ? "Yes" : '<span class="muted">No</span>'}</td>
       <td style="text-align:right;white-space:nowrap"><button class="btn quiet sm" data-act="editemp" data-id="${esc(e.id)}">Edit</button>${e.userId && S.me && e.userId !== S.me.userId ? ` <button class="linkbtn" data-act="admin" data-user="${esc(e.userId)}" data-on="${admin ? 0 : 1}" data-name="${esc(e.name)}">${admin ? "Remove HR" : "Make HR"}</button>` : ""}</td></tr>`;
   }
   return h + `</tbody></table></div>`;
@@ -459,11 +467,9 @@ function hrHomes() {
   return h + `</tbody></table></div><p class="muted" style="font-size:12.5px">Changes save when you leave a field.</p>`;
 }
 function hrSettings() {
-  const thisM = monthKey(TODAY), nextM = monthKey(iso(new Date(NOW.getFullYear(), NOW.getMonth() + 1, 1)));
   const demo = S.employees.filter((e) => e.demo).length;
   return `<div class="stack"><section class="card"><span class="eyebrow">Announcement banner</span><textarea id="ann" rows="2" maxlength="280" style="width:100%;margin:8px 0" placeholder="e.g. Staff appreciation lunch Friday at 3 PM. Leave empty to hide.">${esc(S.settings.announcement)}</textarea><button class="btn" data-act="ann">Save announcement</button></section>
-    <section class="card"><span class="eyebrow">Publish schedules</span><p style="margin:6px 0 12px;font-size:14px">DSPs pick next month's shifts by the ${CFG.availabilityDueDay}th. Publish by the ${CFG.schedulePublishDay}th to lock it: DSPs can't add or drop shifts after that, but HR can still assign and remove.</p>
-      ${[thisM, nextM].map((m) => { const on = S.settings.lockedMonths.includes(m); return `<div style="display:flex;align-items:center;gap:10px;margin:6px 0"><b style="min-width:9em">${monthName(m)}</b>${on ? `<span class="badge good">Published</span><button class="btn quiet sm" data-act="lock" data-m="${m}" data-on="0">Reopen</button>` : `<span class="badge">Open</span><button class="btn sm" data-act="lock" data-m="${m}" data-on="1">Publish &amp; lock</button>`}</div>`; }).join("")}</section>
+    <section class="card"><span class="eyebrow">Publishing</span><p style="margin:6px 0 0;font-size:15px">Publish each week from <button class="linkbtn" data-act="hrsub" data-sub="coverage">Coverage</button>. DSPs can pick shifts up to ${CFG.signupWeeksAhead} weeks ahead. Publishing locks the week and emails every DSP their final schedule.</p></section>
     <section class="card"><span class="eyebrow">Demo data</span><p style="margin:6px 0 12px;font-size:14px">${demo} demo DSPs (Sally Thompson and team) and their shifts are loaded for presentations.</p>
       ${demo ? `<button class="btn danger" data-act="wipedemo">Remove demo data</button>` : ""}${B.mode === "preview" ? ` <button class="btn quiet" data-act="resetdemo">Reset preview</button>` : ""}</section></div>`;
 }
@@ -524,16 +530,17 @@ const actions = {
   addhome: () => act(() => B.saveHome({ name: `Home ${S.homes.length + 1}`, cluster: "D", location: "Community", residents: 6 }), "Home added."),
   delhome: (d) => { if (confirm(`Remove ${d.name}?`)) act(() => B.deleteHome(+d.id), "Home removed."); },
   ann: () => { const v = $("ann").value.trim().slice(0, 280); act(() => B.saveAnnouncement(v), v ? "Announcement posted." : "Announcement removed."); },
-  lock: (d) => act(() => B.setLock(d.m, d.on === "1"), d.on === "1" ? `${monthName(d.m)} published and locked.` : `${monthName(d.m)} reopened.`),
+  publish: (d) => { if (confirm(`Publish the week of ${fmt(d.w, { month: "long", day: "numeric" })}? It locks the week for DSPs and emails everyone their final schedule.`)) act(() => B.publishWeek(d.w), (r) => r && r.preview ? "Week published. (Preview mode: no emails sent.)" : `Week published. Emailed ${r.sent} of ${r.people} DSPs${r.failed && r.failed.length ? `; ${r.failed.length} failed` : ""}.`); },
+  unpublish: (d) => { if (confirm("Reopen this week? DSPs will be able to change their shifts again.")) act(() => B.setWeekLock(d.w, false), "Week reopened."); },
   wipedemo: () => { if (confirm("Remove all demo DSPs and their shifts? Real people and their shifts stay.")) act(() => B.wipeDemo(), (n) => `Removed ${n} demo DSPs.`); },
   resetdemo: () => { if (confirm("Reset all preview data on this device?")) { B.resetDemo(); } },
   print: () => window.print(),
   csv: () => {
     const ws = weekStart(S.hrWeekRef), we = addDays(ws, 6), q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-    const rows = [["Date", "Block", "Team", "Employee", "Level", "Hours", "Rate"].map(q).join(",")];
+    const rows = [["Date", "Block", "Team", "Employee", "Role", "Hours"].map(q).join(",")];
     S.signups.filter((s) => s.date >= ws && s.date <= we).sort((a, b) => (a.date + a.block < b.date + b.block ? -1 : 1)).forEach((s) => {
       const e = empById(s.employeeId), t = teamById(s.teamId);
-      rows.push([s.date, BLOCKS[s.block].label, t ? t.name : "", e ? e.name : "", e ? e.level : "", 4, e ? rate(e, s.block).toFixed(2) : ""].map(q).join(","));
+      rows.push([s.date, BLOCKS[s.block].label, t ? t.name : "", e ? e.name : "", e ? e.level : "", 4].map(q).join(","));
     });
     downloadFile(`magnolia-schedule-${ws}.csv`, rows.join("\n"), "text/csv");
   },

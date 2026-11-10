@@ -23,6 +23,9 @@
   "functions": {
     "api/remind.js": {
       "includeFiles": "config.js"
+    },
+    "api/publish.js": {
+      "includeFiles": "config.js"
     }
   },
   "crons": [
