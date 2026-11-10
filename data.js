@@ -86,7 +86,29 @@ function previewBackend(cfg) {
       write(st); notify();
     },
     async saveAnnouncement(text) { st.announcement = text; write(st); notify(); },
+    async assign(date, shiftId, lane, userId) {
+      const { data: existing } = await sb.from("signups").select("id")
+        .eq("user_id", userId).eq("shift_date", date).eq("shift_id", shiftId).maybeSingle();
+      const q = existing
+        ? sb.from("signups").update({ lane }).eq("id", existing.id)
+        : sb.from("signups").insert({ user_id: userId, shift_date: date, shift_id: shiftId, lane });
+      const { error } = await q;
+      if (error) throw friendly(error);
+      ping();
+    },
+    async myHistory() {
+      const { data, error } = await sb.from("signups").select("shift_date,shift_id,lane").eq("user_id", me.id).order("shift_date");
+      if (error) throw friendly(error);
+      return data.map((r) => ({ date: r.shift_date, shiftId: r.shift_id, lane: r.lane }));
+    },
     async setReminders(on) { st.reminders = on; write(st); notify(); },
+    async assign(date, shiftId, lane, userId, name) {
+      if (st.rows.some((r) => r.date === date && r.shiftId === shiftId && r.lane === lane)) fail("That lane was just taken.");
+      st.rows = st.rows.filter((r) => !(r.date === date && r.shiftId === shiftId && r.userId === userId));
+      st.rows.push({ date, shiftId, lane, userId, name: userId === ME ? "" : name, at: Date.now() });
+      write(st); notify();
+    },
+    async myHistory() { return st.rows.filter((r) => r.userId === ME).map((r) => ({ date: r.date, shiftId: r.shiftId, lane: r.lane })); },
     async setName(name) { st.myName = name; write(st); notify(); },
     async saveGroups(list) { st.groups = list; write(st); notify(); },
     async signIn() {}, async signOut() {},
@@ -244,6 +266,21 @@ async function supabaseBackend(cfg) {
       const { error } = await sb.from("waitlist").delete().eq("user_id", me.id).eq("shift_date", date).eq("shift_id", shiftId);
       if (error) throw friendly(error);
       ping();
+    },
+    async assign(date, shiftId, lane, userId) {
+      const { data: existing } = await sb.from("signups").select("id")
+        .eq("user_id", userId).eq("shift_date", date).eq("shift_id", shiftId).maybeSingle();
+      const q = existing
+        ? sb.from("signups").update({ lane }).eq("id", existing.id)
+        : sb.from("signups").insert({ user_id: userId, shift_date: date, shift_id: shiftId, lane });
+      const { error } = await q;
+      if (error) throw friendly(error);
+      ping();
+    },
+    async myHistory() {
+      const { data, error } = await sb.from("signups").select("shift_date,shift_id,lane").eq("user_id", me.id).order("shift_date");
+      if (error) throw friendly(error);
+      return data.map((r) => ({ date: r.shift_date, shiftId: r.shift_id, lane: r.lane }));
     },
     async setReminders(on) {
       const { error } = await sb.from("profiles").update({ reminders: on }).eq("id", me.id);

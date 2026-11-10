@@ -247,6 +247,14 @@ do $$ begin
   end if;
 end $$;
 
+-- ---------- admins can assign anyone to a lane (any date, for logging attendance too) ----------
+drop policy if exists "admins assign" on public.signups;
+create policy "admins assign" on public.signups
+  for insert to authenticated with check (public.is_admin());
+drop policy if exists "admins move" on public.signups;
+create policy "admins move" on public.signups
+  for update to authenticated using (public.is_admin()) with check (public.is_admin());
+
 -- ---------- manual fallback: make someone an admin by email ----------
 -- update public.profiles set is_admin = true
 --   where id = (select id from auth.users where email = 'you@example.com');

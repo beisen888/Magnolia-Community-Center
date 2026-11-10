@@ -254,3 +254,7 @@ table.roster{width:100%;border-collapse:collapse;font-size:14px;background:var(-
 .mine-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;justify-content:flex-end}
 .remind{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);cursor:pointer}
 .remind input{width:16px;height:16px;accent-color:var(--accent)}
+select.assign{font:inherit;font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);max-width:110px}
+.hours{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:20px}
+.hrow{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:4px;font-size:15px}
+.hrow b{font-family:var(--f-display);font-size:22px}

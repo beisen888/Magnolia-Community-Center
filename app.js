@@ -79,6 +79,7 @@ async function refresh() {
 }
 
 async function act(fn, okMsg) {
+  S.history = undefined;
   try { await fn(); if (okMsg) toast(okMsg); }
   catch (e) { toast((e && e.friendly) || "Something went wrong. Try again."); }
   await refresh();
@@ -261,6 +262,35 @@ function renderCal(idx) {
   });
 }
 
+function assignSelect(shId, lane) {
+  if (S.people === undefined) { loadPeople(); return ""; }
+  if (!Array.isArray(S.people) || !S.people.length) return "";
+  return `<select class="assign" data-assign="${shId}|${lane}" aria-label="Assign someone to lane ${lane + 1}"><option value="">Assign…</option>${S.people.map((p) => `<option value="${esc(p.id)}">${esc(p.name || p.email)}</option>`).join("")}</select> `;
+}
+
+async function repeatWeekly(date, shiftId, lane) {
+  const WEEKS = 4, wd = parse(date).toLocaleDateString("en-US", { weekday: "long" });
+  const sh = SHIFTS.find((x) => x.id === shiftId);
+  if (!confirm(`Sign up for ${sh ? sh.label.toLowerCase() : "this"} shift every ${wd} for the next ${WEEKS} weeks? We'll keep lane ${lane + 1} when it's open.`)) return;
+  const last = addDays(date, 7 * WEEKS);
+  let rows;
+  try { rows = (await B.load(addDays(date, 1), last)).rows; } catch (e) { toast("Couldn't check those weeks. Try again."); return; }
+  let added = 0; const skipped = [];
+  for (let i = 1; i <= WEEKS; i++) {
+    const d = addDays(date, 7 * i);
+    if (!isWork(d)) { skipped.push(shortDate(d) + " (closed)"); continue; }
+    const here = rows.filter((r) => r.date === d && r.shiftId === shiftId);
+    if (here.some((r) => S.me && r.userId === S.me.id)) { added++; continue; }
+    const taken = new Set(here.map((r) => r.lane));
+    const pick = !taken.has(lane) ? lane : [0, 1, 2, 3, 4].find((x) => !taken.has(x));
+    if (pick === undefined) { skipped.push(shortDate(d) + " (full)"); continue; }
+    try { await B.take(d, shiftId, pick); added++; } catch (e) { skipped.push(shortDate(d)); }
+  }
+  S.history = undefined;
+  toast(`Signed up for ${added} of ${WEEKS} weeks.` + (skipped.length ? ` Skipped: ${skipped.join(", ")}.` : ""));
+  refresh();
+}
+
 function renderDay(idx) {
   const s = S.sel, el = $("day"), dt = parse(s);
   if (dt.getMonth() !== S.m || dt.getFullYear() !== S.y || !isWork(s)) { el.innerHTML = `<div class="empty"><h3>Pick a weekday</h3>Choose any open day on the calendar to see its shifts.</div>`; return; }
@@ -275,10 +305,11 @@ function renderDay(idx) {
     L.forEach((r, k) => {
       const isMe = r && S.me && r.userId === S.me.id;
       let action = "";
-      if (past) action = "";
-      else if (isMe) action = `<button class="btn ghost" data-drop="${sh.id}">Drop</button>`;
+      const assignSel = isAdmin() ? assignSelect(sh.id, k) : "";
+      if (past) action = r ? "" : assignSel;
+      else if (isMe) action = `<button class="btn quiet" data-repeat="${sh.id}" data-lane="${k}" title="Same shift, same weekday, next 4 weeks">Repeat weekly</button> <button class="btn ghost" data-drop="${sh.id}">Drop</button>`;
       else if (r) action = isAdmin() && B.mode === "live" ? `<button class="btn quiet" data-rm="${esc(r.userId)}" data-sh="${sh.id}" data-name="${esc(r.name)}">Remove</button>` : "";
-      else action = `<button class="btn" data-take="${sh.id}" data-lane="${k}">${mineHere ? "Switch here" : "Take lane"}</button>`;
+      else action = assignSel + `<button class="btn" data-take="${sh.id}" data-lane="${k}">${mineHere ? "Switch here" : "Take lane"}</button>`;
       h += `<tr class="${r ? "" : "open"}${isMe ? " mine" : ""}"><td class="l">${k + 1}</td><td class="p">${r ? esc(displayName(r)) : "Open"}</td>`
         + hours.map((x) => { const g = groupAt(k, x); return `<td class="h"><span class="blk g${g}" title="${esc(S.groups[g])}">${LETTERS[g]}</span></td>`; }).join("")
         + `<td class="a">${action}</td></tr>`;
@@ -300,6 +331,13 @@ function renderDay(idx) {
   el.innerHTML = h;
   el.querySelectorAll("[data-take]").forEach((b) => b.onclick = () => takeLane(s, b.dataset.take, +b.dataset.lane));
   el.querySelectorAll("[data-drop]").forEach((b) => b.onclick = () => dropLane(s, b.dataset.drop));
+  el.querySelectorAll("[data-repeat]").forEach((b) => b.onclick = () => repeatWeekly(s, b.dataset.repeat, +b.dataset.lane));
+  el.querySelectorAll("select[data-assign]").forEach((sel) => sel.onchange = () => {
+    const uid = sel.value; if (!uid) return;
+    const p = (S.people || []).find((x) => x.id === uid); const nm = p ? p.name || p.email : "them";
+    const [shId, lane] = sel.dataset.assign.split("|");
+    act(() => B.assign(s, shId, +lane, uid, nm), `Assigned ${nm} to lane ${+lane + 1}.`);
+  });
   el.querySelectorAll("[data-wait]").forEach((b) => b.onclick = () => { if (needsSignIn()) return; act(() => B.joinWaitlist(s, b.dataset.wait), "You're on the waitlist. If a lane opens, it's yours automatically."); });
   el.querySelectorAll("[data-unwait]").forEach((b) => b.onclick = () => act(() => B.leaveWaitlist(s, b.dataset.unwait), "Left the waitlist."));
   el.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => removeOther(b.dataset.rm, s, b.dataset.sh, b.dataset.name));
@@ -371,8 +409,8 @@ function renderMine(idx) {
   const waitHtml = myWaits.length ? `<div class="wlbox"><span class="eyebrow">Waitlists you're on</span>${myWaits.map((w) => { const sh = SHIFTS.find((x) => x.id === w.shiftId); return `<div>${shortDate(w.date)} · ${sh ? sh.label : w.shiftId}: <b>#${myWaitPos(w.date, w.shiftId)}</b> in line <button class="linkbtn" data-unwait2="${w.date}|${w.shiftId}">Leave</button></div>`; }).join("")}<p class="hint" style="margin:6px 0 0">If a lane opens, it's assigned to you automatically and shows up here.</p></div>` : "";
   const calBtn = `<span class="mine-actions"><label class="remind"><input type="checkbox" id="remind" ${S.me && S.me.reminders !== false ? "checked" : ""}> Email me the night before</label><button class="btn ghost lg" id="ics">Add upcoming shifts to my calendar</button></span>`;
   if (!dates.length) {
-    el.innerHTML = waitHtml + `<div class="empty"><h3>No shifts in ${monthName} yet</h3>Check <b>Open spots</b> or pick a day on the Month tab and take an open lane.<p style="margin-top:14px">${calBtn}</p></div>`;
-    $("ics").onclick = exportIcs; wireUnwait(el); return;
+    el.innerHTML = waitHtml + `<div class="empty"><h3>No shifts in ${monthName} yet</h3>Check <b>Open spots</b> or pick a day on the Month tab and take an open lane.<p style="margin-top:14px">${calBtn}</p></div>` + hoursCard();
+    $("ics").onclick = exportIcs; wireUnwait(el); wireHours(); return;
   }
   const perGroup = [0, 0, 0, 0, 0]; let hours = 0, shifts = 0;
   for (const k of Object.keys(mine)) {
@@ -398,8 +436,39 @@ function renderMine(idx) {
     const which = SHIFTS.filter((s) => mine[shiftKey(d, s.id)]).map((s) => `${s.label} · lane ${mine[shiftKey(d, s.id)].lane + 1}`).join("<br>");
     h += `<div class="drow"><div class="d">${shortDate(d)}<small>${which}</small></div><div class="tl" style="grid-template-columns:repeat(${allHours.length},minmax(0,1fr))">${cells}</div></div>`;
   }
-  el.innerHTML = waitHtml + h + `</div>`;
-  $("ics").onclick = exportIcs; wireUnwait(el);
+  el.innerHTML = waitHtml + h + `</div>` + hoursCard();
+  $("ics").onclick = exportIcs; wireUnwait(el); wireHours();
+}
+function completedHours(hist) {
+  const nowH = new Date().getHours();
+  let shifts = 0, hours = 0, upcoming = 0;
+  for (const r of hist) {
+    const sh = SHIFTS.find((x) => x.id === r.shiftId); if (!sh) continue;
+    if (r.date < TODAY || (r.date === TODAY && sh.end <= nowH)) { shifts++; hours += sh.end - sh.start; } else upcoming++;
+  }
+  return { shifts, hours, upcoming };
+}
+function hoursCard() {
+  if (S.history === undefined) { S.history = null; B.myHistory().then((h) => { S.history = h; if (S.tab === "mine") render(); }).catch(() => { S.history = []; }); }
+  if (!S.history) return `<div class="hours card"><span class="k">Loading your hours…</span></div>`;
+  const t = completedHours(S.history);
+  return `<div class="hours card"><div><span class="eyebrow">All-time volunteering</span><div class="hrow"><span><b>${t.hours}</b> hours</span><span><b>${t.shifts}</b> shifts completed</span><span><b>${t.upcoming}</b> upcoming</span></div></div>`
+    + `<button class="btn ghost lg" id="cert" ${t.hours ? "" : "disabled title=\"Finish a shift first\""}>Print hours certificate</button></div>`;
+}
+function wireHours() {
+  const b = $("cert"); if (!b) return;
+  b.onclick = () => {
+    const t = completedHours(S.history || []);
+    const done = (S.history || []).filter((r) => r.date < TODAY).map((r) => r.date).sort();
+    const range = done.length ? `${shortDate(done[0])} – ${shortDate(done[done.length - 1])}` : "";
+    const w = window.open("", "_blank");
+    if (!w) { toast("Allow pop-ups to print the certificate."); return; }
+    w.document.write(`<!doctype html><title>Volunteer hours</title><style>body{font-family:Georgia,serif;color:#13201B;display:grid;place-items:center;min-height:95vh;margin:0}.c{border:6px double #1F4D3D;padding:48px 56px;max-width:640px;text-align:center}h1{font-size:34px;margin:6px 0 18px}.n{font-size:28px;font-weight:bold;margin:8px 0}.small{color:#55665E;font-family:Arial,sans-serif;font-size:13px;letter-spacing:.12em;text-transform:uppercase}.sig{margin-top:44px;display:flex;justify-content:space-between;gap:40px;font-family:Arial,sans-serif;font-size:12px;color:#55665E}.sig div{flex:1;border-top:1px solid #13201B;padding-top:6px}</style>
+      <div class="c"><div class="small">${esc(CFG.orgName)}</div><h1>Certificate of Volunteer Service</h1><p>This certifies that</p><div class="n">${esc((S.me && S.me.name) || "")}</div>
+      <p>completed <b>${t.hours} hours</b> of volunteer service across <b>${t.shifts} shifts</b>${range ? `<br>(${range})` : ""}.</p>
+      <div class="sig"><div>Coordinator signature</div><div>Date issued: ${new Date().toLocaleDateString("en-US")}</div></div></div><script>onload=()=>print()<\/script>`);
+    w.document.close();
+  };
 }
 function wireRemind() {
   const r = $("remind");
@@ -505,6 +574,7 @@ async function loadPeople() {
   S.people = null;
   try { S.people = await B.listPeople(); } catch (e) { S.people = { error: (e && e.friendly) || "Couldn't load people." }; }
   if (S.tab === "admin") { $("people").innerHTML = peopleTable(); wirePeople(); }
+  else if (S.tab === "month") render();
 }
 function peopleTable() {
   const P = S.people;
