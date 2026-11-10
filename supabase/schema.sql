@@ -54,6 +54,14 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- ---------- table access (explicit, so it works even if "auto-expose tables" is off) ----------
+grant usage on schema public to anon, authenticated;
+grant select on public.profiles to authenticated;
+grant select, insert, update, delete on public.signups to authenticated;
+grant select on public.settings to anon, authenticated;
+grant update on public.settings to authenticated;
+grant execute on function public.is_admin(), public.org_today() to anon, authenticated;
+
 -- ---------- row level security ----------
 alter table public.profiles enable row level security;
 alter table public.signups  enable row level security;
