@@ -82,7 +82,12 @@ module.exports = async (req, res) => {
     fetch(`${sbUrl}/rest/v1/rpc/reminder_list`, { method: "POST", headers: sbHeaders, body: JSON.stringify({ day: date }) }),
     fetch(`${sbUrl}/rest/v1/settings?id=eq.1&select=groups`, { headers: sbHeaders }),
   ]);
-  if (!listRes.ok) return res.status(502).json({ error: "supabase", detail: await listRes.text() });
+  if (!listRes.ok) {
+    // Safe diagnostics: the key's type and length only, never the key itself.
+    const shape = { type: key.startsWith("sb_secret_") ? "sb_secret" : key.startsWith("sb_publishable_") ? "publishable (wrong key)" : key.startsWith("eyJ") ? "legacy JWT" : "unknown",
+      length: key.length, hasDots: /[•·]/.test(key), hasSpaces: /\s/.test(key) };
+    return res.status(502).json({ error: "supabase", detail: await listRes.text(), keyShape: shape });
+  }
   const list = await listRes.json();
   const settings = setRes.ok ? await setRes.json() : [];
   const groups = (settings[0] && settings[0].groups) || cfg.defaultGroups;
