@@ -20,6 +20,8 @@ You edit in Cursor ──push──▶ GitHub ──auto-deploy──▶ Vercel 
 | **How it works** | The rotation explained with an example grid. |
 | **Admin** *(admins only)* | Coverage %, volunteer hours, thinnest upcoming days, roster, CSV export, print, remove people, rename groups. |
 
+Plus: **waitlist** with automatic fill when a lane opens · **repeat weekly** sign-ups · **admin assign** anyone to a lane · **announcement banner** · **nightly email reminders** (`api/remind.js`, Vercel cron + Resend; needs `RESEND_API_KEY`, `SUPABASE_SECRET_KEY`, `CRON_SECRET` env vars) · **all-time hours + printable certificate** · **Claim admin** + **People & admins** management.
+
 Also: email magic-link sign-in (no passwords), live updates across everyone's screens, the database blocks double-booking, past days are locked, dark mode, installs to a phone home screen.
 
 **Preview mode:** without Supabase keys, the site runs on demo data saved only in your browser. Good for designing in Cursor.
