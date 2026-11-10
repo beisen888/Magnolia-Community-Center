@@ -1,0 +1,10 @@
+{
+  "name": "magnolia-shift-board",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Volunteer shift sign-up board with hourly group rotation. Static site + Supabase, deployed on Vercel.",
+  "scripts": {
+    "dev": "npx --yes serve . -l 3000",
+    "dev:vercel": "npx --yes vercel dev"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Magnolia Shift Board",
+  "short_name": "Shifts",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F2F6F3",
+  "theme_color": "#1F4D3D",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

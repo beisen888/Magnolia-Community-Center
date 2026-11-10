@@ -1,0 +1,26 @@
+---
+description: How the Magnolia Shift Board is built. Read before changing anything.
+alwaysApply: true
+---
+
+# Magnolia Shift Board
+
+Plain HTML/CSS/JavaScript. No framework, no build step. Vercel serves the files as-is.
+
+## Files
+- `index.html`: page skeleton (header, tabs, sign-in dialog). Loads the scripts in this order: config.js → data.js → ics.js → app.js.
+- `config.js`: org name, shift times, workdays, default group names. Change the schedule here.
+- `app.js`: all UI rendering. One state object `S`, one `render()` that redraws from state. Each tab has its own `renderX()` function.
+- `data.js`: the ONLY place that talks to storage. `createBackend()` returns either the Preview backend (localStorage demo) or the Supabase backend. Both expose the same methods: `init, me, load, take, drop, setName, saveGroups, signIn, signOut`. Add new data features to BOTH.
+- `ics.js`: calendar-file export.
+- `styles.css`: design tokens live in `:root` (light) and the dark-mode blocks. Use the CSS variables, never hard-coded colors.
+- `api/config.js`: Vercel serverless function that returns the public Supabase URL + anon key from env vars.
+- `supabase/schema.sql`: tables, row-level security, realtime. Any new table needs RLS policies.
+
+## Rules
+- The rotation formula `groupAt(lane, hour)` is the core of the app. Don't change it without asking.
+- Exactly 5 lanes / 5 groups (colors g0–g4 and the database check constraint depend on it).
+- Always escape user text with `esc()` before putting it in HTML.
+- Keep it accessible: real `<button>`s, aria labels, visible focus, works at 375px wide.
+- Keep copy short and friendly. No emoji in the UI.
+- Never put the Supabase service_role key in the frontend or in git.
