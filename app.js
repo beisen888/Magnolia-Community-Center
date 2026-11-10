@@ -369,7 +369,7 @@ function renderMine(idx) {
   const dates = [...new Set(Object.keys(mine).filter((k) => k.startsWith(prefix)).map((k) => k.split("_")[0]))].sort();
   const myWaits = S.waitlist.filter((w) => S.me && w.userId === S.me.id && w.date >= TODAY).sort((a, b) => (a.date + a.shiftId < b.date + b.shiftId ? -1 : 1));
   const waitHtml = myWaits.length ? `<div class="wlbox"><span class="eyebrow">Waitlists you're on</span>${myWaits.map((w) => { const sh = SHIFTS.find((x) => x.id === w.shiftId); return `<div>${shortDate(w.date)} · ${sh ? sh.label : w.shiftId}: <b>#${myWaitPos(w.date, w.shiftId)}</b> in line <button class="linkbtn" data-unwait2="${w.date}|${w.shiftId}">Leave</button></div>`; }).join("")}<p class="hint" style="margin:6px 0 0">If a lane opens, it's assigned to you automatically and shows up here.</p></div>` : "";
-  const calBtn = `<button class="btn ghost lg" id="ics">Add upcoming shifts to my calendar</button>`;
+  const calBtn = `<span class="mine-actions"><label class="remind"><input type="checkbox" id="remind" ${S.me && S.me.reminders !== false ? "checked" : ""}> Email me the night before</label><button class="btn ghost lg" id="ics">Add upcoming shifts to my calendar</button></span>`;
   if (!dates.length) {
     el.innerHTML = waitHtml + `<div class="empty"><h3>No shifts in ${monthName} yet</h3>Check <b>Open spots</b> or pick a day on the Month tab and take an open lane.<p style="margin-top:14px">${calBtn}</p></div>`;
     $("ics").onclick = exportIcs; wireUnwait(el); return;
@@ -401,7 +401,12 @@ function renderMine(idx) {
   el.innerHTML = waitHtml + h + `</div>`;
   $("ics").onclick = exportIcs; wireUnwait(el);
 }
+function wireRemind() {
+  const r = $("remind");
+  if (r) r.onchange = () => act(() => B.setReminders(r.checked), r.checked ? "You'll get an email the evening before each shift." : "Reminder emails turned off.");
+}
 function wireUnwait(el) {
+  wireRemind();
   el.querySelectorAll("[data-unwait2]").forEach((b) => b.onclick = () => { const [d, sh] = b.dataset.unwait2.split("|"); act(() => B.leaveWaitlist(d, sh), "Left the waitlist."); });
 }
 

@@ -48,7 +48,7 @@ function previewBackend(cfg) {
   return {
     mode: "preview",
     async init(onChange) { notify = onChange; },
-    me() { return { id: ME, email: "", name: st.myName || "", isAdmin: true }; },
+    me() { return { id: ME, email: "", name: st.myName || "", isAdmin: true, reminders: st.reminders !== false }; },
     async load(from, to) {
       const rows = st.rows.filter((r) => r.date >= from && r.date <= to)
         .map((r) => ({ ...r, name: r.userId === ME ? (st.myName || "You") : r.name }));
@@ -86,6 +86,7 @@ function previewBackend(cfg) {
       write(st); notify();
     },
     async saveAnnouncement(text) { st.announcement = text; write(st); notify(); },
+    async setReminders(on) { st.reminders = on; write(st); notify(); },
     async setName(name) { st.myName = name; write(st); notify(); },
     async saveGroups(list) { st.groups = list; write(st); notify(); },
     async signIn() {}, async signOut() {},
@@ -146,8 +147,8 @@ async function supabaseBackend(cfg) {
   async function refreshMe(session) {
     if (!session) { me = null; return; }
     const u = session.user;
-    const { data } = await sb.from("profiles").select("name,is_admin").eq("id", u.id).maybeSingle();
-    me = { id: u.id, email: u.email || "", name: (data && data.name) || "", isAdmin: !!(data && data.is_admin) };
+    const { data } = await sb.from("profiles").select("name,is_admin,reminders").eq("id", u.id).maybeSingle();
+    me = { id: u.id, email: u.email || "", name: (data && data.name) || "", isAdmin: !!(data && data.is_admin), reminders: !data || data.reminders !== false };
   }
 
   function subscribe() {
@@ -243,6 +244,11 @@ async function supabaseBackend(cfg) {
       const { error } = await sb.from("waitlist").delete().eq("user_id", me.id).eq("shift_date", date).eq("shift_id", shiftId);
       if (error) throw friendly(error);
       ping();
+    },
+    async setReminders(on) {
+      const { error } = await sb.from("profiles").update({ reminders: on }).eq("id", me.id);
+      if (error) throw friendly(error);
+      me = { ...me, reminders: on }; ping();
     },
     async saveAnnouncement(text) {
       const { error } = await sb.from("settings").update({ announcement: text }).eq("id", 1);

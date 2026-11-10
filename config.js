@@ -28,4 +28,7 @@ window.MAGNOLIA = {
 
   // How far ahead the "Open spots" tab looks.
   openSpotsDays: 21,
+
+  // Used for "tomorrow" in reminder emails.
+  timezone: "America/Chicago",
 };

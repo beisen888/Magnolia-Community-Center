@@ -225,6 +225,28 @@ revoke execute on function public.admin_people(), public.set_admin(uuid, boolean
 grant execute on function public.admin_people(), public.set_admin(uuid, boolean),
   public.claim_first_admin(), public.has_admin() to authenticated;
 
+-- ---------- email reminders (sent nightly by /api/remind on Vercel) ----------
+alter table public.profiles add column if not exists reminders boolean not null default true;
+grant update (name, reminders) on public.profiles to authenticated;
+
+-- Everyone working on a given day who wants reminders. Only the server (secret key) can call this.
+create or replace function public.reminder_list(day date)
+returns table (email text, name text, shift_id text, lane smallint)
+language sql stable security definer set search_path = public as $$
+  select u.email::text, p.name, s.shift_id, s.lane
+  from public.signups s
+  join public.profiles p on p.id = s.user_id
+  join auth.users u on u.id = s.user_id
+  where s.shift_date = day and p.reminders and u.email is not null
+  order by u.email, s.shift_id
+$$;
+revoke execute on function public.reminder_list(date) from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.reminder_list(date) to service_role;
+  end if;
+end $$;
+
 -- ---------- manual fallback: make someone an admin by email ----------
 -- update public.profiles set is_admin = true
 --   where id = (select id from auth.users where email = 'you@example.com');
