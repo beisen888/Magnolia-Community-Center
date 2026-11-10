@@ -101,7 +101,8 @@ let toastTimer;
 function toast(msg) {
   let t = document.querySelector(".toast");
   if (!t) { t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
-  t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 4000);
+  t.textContent = msg; t.hidden = false; t.classList.remove("show"); void t.offsetWidth; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 4000);
 }
 function openSignIn() { const d = $("signin"); d.showModal ? d.showModal() : d.setAttribute("open", ""); setTimeout(() => $("email").focus(), 30); }
 $("signin-cancel").onclick = () => $("signin").close();
@@ -120,6 +121,17 @@ $("theme").onclick = () => {
 };
 
 /* ---------- render shell ---------- */
+let lastViewKey = "", countdownTimer = null;
+function untilText(ms) {
+  if (ms <= 0) return "";
+  const m = Math.round(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  return "Starts in " + (d ? `${d}d ${h}h` : h ? `${h}h ${mm}m` : `${mm} min`);
+}
+function startCountdowns() {
+  clearInterval(countdownTimer);
+  const tick = () => document.querySelectorAll("[data-at]").forEach((el) => { el.textContent = untilText(+el.dataset.at - Date.now()); });
+  tick(); if (document.querySelector("[data-at]")) countdownTimer = setInterval(tick, 30000);
+}
 function render() {
   document.title = `${CFG.appName} · ${CFG.orgName}`;
   renderWho(); renderTabs(); renderNotice();
@@ -129,6 +141,9 @@ function render() {
   const views = { home: viewHome, schedule: viewSchedule, teams: viewTeams, quiz: viewQuiz, hr: viewHR };
   if (S.tab === "hr" && !isAdmin()) S.tab = "home";
   v.innerHTML = (views[S.tab] || viewHome)();
+  const key = [S.tab, S.weekRef, S.hrSub, S.hrWeekRef, S.y, S.m, S.quiz.i].join("|");
+  if (key !== lastViewKey) { lastViewKey = key; v.classList.remove("enter"); void v.offsetWidth; v.classList.add("enter"); }
+  startCountdowns();
   $("footer").innerHTML = B.mode === "preview"
     ? `Preview mode: demo data saved only in this browser.`
     : `${esc(CFG.orgName)} · ${esc(CFG.appName)} · updates live`;
@@ -182,6 +197,8 @@ function viewHome() {
   if (needName) h += `<div class="card" style="margin-bottom:18px"><form class="form" data-form="myname"><label class="wide">Your name (shown to HR and your team)<input name="name" maxlength="60" required placeholder="First and last name"></label><button class="btn lg">Save</button></form></div>`;
   if (!emp.teams.length) h += `<div class="card" style="margin-bottom:18px;border-color:var(--accent)"><div class="sec-title"><h2>First, find your team</h2></div><p class="muted" style="margin:0 0 12px">You'll only see and take shifts on your team(s). Take the 2-minute quiz, or pick teams yourself.</p><button class="btn lg" data-act="tab" data-tab="quiz">Take the quiz</button> <button class="btn ghost lg" data-act="tab" data-tab="teams">Browse teams</button></div>`;
 
+  if (!seenTips() && emp.teams.length) h += `<section class="card tips"><div class="sec-title"><h3>Welcome to the new schedule</h3><button class="btn sm" data-act="tipsdone">Got it</button></div>
+    <ol><li><b>Pick shifts below.</b> Tap <b>4 hrs</b> for one block or <b>8 hrs</b> for a full day.</li><li><b>Watch the bar fill.</b> It turns green when you hit your weekly hours.</li><li><b>Check your email.</b> HR sends your final schedule before each week starts.</li></ol></section>`;
   h += `<div class="grid2"><div class="stack">`;
   // week progress
   h += `<section class="card week"><div class="sec-title"><h3>Week of ${fmt(ws, { month: "short", day: "numeric" })} – ${fmt(we, { month: "short", day: "numeric" })}</h3>
@@ -194,7 +211,7 @@ function viewHome() {
   // open shifts to fill the week
   h += fillWeek(emp, ws, we, hours, target);
   h += `</div><div class="stack">`;
-  h += nextShift(emp) + cycleCard() + profileCard(emp);
+  h += nextShift(emp) + myTeamCard(emp, ws, we) + cycleCard() + profileCard(emp);
   h += `</div></div>`;
   return h;
 }
@@ -214,6 +231,16 @@ function fillWeek(emp, ws, we, hours, target) {
       <div class="acts"><button class="btn" data-act="take" data-date="${x.d}" data-block="${x.b}" data-team="${x.t.id}">4 hrs</button>${x.eight ? `<button class="btn ghost" data-act="take" data-date="${x.d}" data-block="${x.b}" data-team="${x.t.id}" data-two="1" title="This block plus the next one">8 hrs</button>` : ""}</div></div>`;
   }).join("")}</div></section>`;
 }
+function seenTips() { try { return localStorage.getItem("magnolia-tips-done") === "1"; } catch (_) { return true; } }
+function myTeamCard(emp, ws, we) {
+  if (!emp.teams.length) return "";
+  const mine = empShifts(emp.id, ws, we), mates = {};
+  for (const s of mine) for (const o of shiftsOn(s.date, s.block, s.teamId)) if (o.employeeId !== emp.id) mates[o.employeeId] = (mates[o.employeeId] || 0) + 1;
+  const top = Object.entries(mates).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const leads = emp.teams.map((id) => { const t = teamById(id); const l = S.employees.filter((e) => e.active !== false && e.teams.includes(id) && e.level === "Lead DSP"); return t ? `<div class="rosterrow"><span class="eyebrow ${teamClass(t)}" style="color:var(--tc)">${esc(t.shortName)}</span><span>Lead: ${l.length ? l.map((e) => esc(e.name)).join(", ") : '<span class="muted">not assigned</span>'}</span></div>` : ""; }).join("");
+  return `<section class="card"><span class="eyebrow">My team</span><div class="roster mt" style="margin-top:8px">${leads}</div>
+    <div style="margin-top:10px;font-size:14px"><b>Working with you this week</b><div class="mates">${top.length ? top.map(([id, n]) => { const e = empById(id); return `<span class="av"><i style="background:var(--accent);color:var(--accent-ink)">${esc(initials(e && e.name))}</i>${esc(e ? e.name.split(" ")[0] : "?")}${leadOf(e) ? ' <b class="lead">Lead</b>' : ""} <span class="muted">· ${n}</span></span>`; }).join("") : '<span class="muted">Pick shifts to see who you\'ll work with.</span>'}</div></div></section>`;
+}
 function rotationHtml(team, block) {
   const r = rotation(team, block);
   if (!r) return `<p class="muted" style="margin:8px 0 0;font-size:13px">Overnight residential coverage: stay with your assigned home.</p>`;
@@ -227,7 +254,8 @@ function nextShift(emp) {
   const pair = up[1] && up[1].date === s.date && up[1].block === s.block + 1;
   const days = Math.round((parse(s.date) - parse(TODAY)) / 864e5);
   const when = days === 0 ? (b.start <= nowH ? "Happening now" : "Today") : days === 1 ? "Tomorrow" : `In ${days} days`;
-  return `<section class="card next ${teamClass(t)}"><span class="eyebrow">Next shift · ${when}</span>
+  const at = parse(s.date); at.setHours(b.start);
+  return `<section class="card next ${teamClass(t)}"><span class="eyebrow">Next shift · ${when}</span><div class="countdown" data-at="${at.getTime()}"></div>
     <div class="when">${short(s.date)} · ${hShort(b.start)}–${hShort(pair ? BLOCKS[s.block + 1].end : b.end)}</div>
     <div class="muted" style="font-size:14px">${esc(t ? t.name : "")}${pair ? " · 8-hour day" : ""}</div>${t ? rotationHtml(t, s.block) : ""}</section>`;
 }
@@ -481,6 +509,7 @@ async function takeShift(date, block, teamId, two, employeeId) {
   const t = teamById(teamId);
   await act(async () => { await B.take(date, block, teamId, employeeId); if (two) await B.take(date, block + 1, teamId, employeeId); },
     `Booked ${short(date)}, ${hShort(BLOCKS[block].start)}–${hShort(BLOCKS[block + (two ? 1 : 0)].end)} · ${t ? t.shortName : ""}`);
+  setTimeout(() => { const w = document.querySelector(".week"); if (w && !employeeId) { w.classList.remove("pulse"); void w.offsetWidth; w.classList.add("pulse"); } }, 60);
 }
 const actions = {
   signin: openSignIn,
@@ -490,7 +519,7 @@ const actions = {
   week: (d) => { S.weekRef = +d.d ? addDays(S.weekRef, +d.d) : TODAY; refresh(); },
   hrweek: (d) => { S.hrWeekRef = +d.d ? addDays(S.hrWeekRef, +d.d) : TODAY; refresh(); },
   month: (d) => { let m = S.m + +d.d, y = S.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.y = y; S.m = m; const f = `${y}-${pad(m + 1)}-01`; S.sel = monthKey(TODAY) === monthKey(f) ? TODAY : f; refresh(); },
-  day: (d) => { S.sel = d.date; render(); if (matchMedia("(max-width: 880px)").matches) $("day").scrollIntoView({ behavior: "smooth", block: "start" }); },
+  day: (d) => { S.sel = d.date; render(); const dp = $("day"); if (dp) { dp.classList.remove("enter"); void dp.offsetWidth; dp.classList.add("enter"); } if (matchMedia("(max-width: 880px)").matches) $("day").scrollIntoView({ behavior: "smooth", block: "start" }); },
   openday: (d) => goDay(d.date),
   take: (d) => takeShift(d.date, +d.block, +d.team, d.two === "1"),
   drop: (d) => act(() => B.drop(+d.id), "Shift dropped."),
@@ -511,6 +540,7 @@ const actions = {
     act(() => B.updateMe(patch), "Team saved. Your matching shifts are on the My week tab.").then(() => { S.tab = "home"; syncHash(); render(); });
   },
   myonly: () => { S.myTeamsOnly = !S.myTeamsOnly; render(); },
+  tipsdone: () => { try { localStorage.setItem("magnolia-tips-done", "1"); } catch (_) {} render(); },
   ics: () => {
     const emp = myEmp(); const ss = empShifts(emp.id, TODAY, addDays(TODAY, 35));
     if (!ss.length) return toast("No upcoming shifts to add yet.");
