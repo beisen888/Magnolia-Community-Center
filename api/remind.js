@@ -61,6 +61,17 @@ function buildEmail({ cfg, groups, date, person, site }) {
 }
 
 module.exports = async (req, res) => {
+  try { return await run(req, res); }
+  catch (e) {
+    const k = (process.env.SUPABASE_SECRET_KEY || "").trim();
+    const keyShape = { startsWithSbSecret: k.startsWith("sb_secret_"), length: k.length, nonAscii: /[^\x20-\x7E]/.test(k) };
+    const r = (process.env.RESEND_API_KEY || "").trim();
+    const resendShape = { startsWithRe: r.startsWith("re_"), length: r.length, nonAscii: /[^\x20-\x7E]/.test(r) };
+    return res.status(500).json({ error: "crash", message: String(e && e.message).slice(0, 200), keyShape, resendShape });
+  }
+};
+
+async function run(req, res) {
   const env = process.env;
   const auth = req.headers.authorization || "";
   if (!env.CRON_SECRET || auth !== `Bearer ${env.CRON_SECRET}`) return res.status(401).json({ error: "unauthorized" });
@@ -107,7 +118,7 @@ module.exports = async (req, res) => {
     results.push({ to: person.email, ok: r.ok, status: r.status, error: r.ok ? undefined : (await r.text()).slice(0, 200) });
   }
   res.status(200).json({ date, dry, count: results.length, results });
-};
+}
 
 module.exports.buildEmail = buildEmail;
 module.exports.orgDate = orgDate;
