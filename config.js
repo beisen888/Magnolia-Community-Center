@@ -1,14 +1,15 @@
 /*
  * Magnolia Shift Board — settings you can edit.
  *
- * Supabase keys: on Vercel these come from environment variables automatically
- * (see /api/config.js). Only fill them in here for local testing without Vercel.
- * The anon key is safe to be public — the database rules in supabase/schema.sql protect the data.
- * Leave both blank to run in Preview mode (demo data saved only in your browser).
+ * Supabase connection. The publishable key is MEANT to be public (it ships to every browser);
+ * the row-level security rules in supabase/schema.sql are what protect the data.
+ * Vercel env vars SUPABASE_URL / SUPABASE_ANON_KEY (via /api/config.js) override these if set.
+ * Blank both to run in Preview mode (demo data saved only in your browser).
+ * NEVER put the sb_secret_ key here.
  */
 window.MAGNOLIA = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://hxqgvmciigwyzeckbgys.supabase.co",
+  supabaseAnonKey: "sb_publishable_dJv88wfXwYNijeHFx4KTSg_jzcx8uXg",
 
   orgName: "Magnolia",
   boardName: "Shift Board",

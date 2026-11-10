@@ -41,11 +41,8 @@ Also: email magic-link sign-in (no passwords), live updates across everyone's sc
 ### 3. Deploy on Vercel
 1. Go to [vercel.com](https://vercel.com) → **Add New → Project** → import `magnolia-shift-board` from GitHub.
 2. Framework preset: **Other**. Leave the build settings empty → **Deploy**.
-3. Connect the database: Project → **Settings → Environment Variables**, add:
-   - `SUPABASE_URL` = Supabase → Project Settings → API → Project URL
-   - `SUPABASE_ANON_KEY` = same page → `anon` `public` key
-   *(Or use Vercel's **Integrations → Supabase**, which adds these automatically.)*
-4. **Deployments → ⋯ → Redeploy** so the new variables take effect.
+3. Connect the database: put your Supabase **Project URL** and **publishable key** (Project Settings → API Keys) into `config.js`, then push. *(Already done for this project.)*
+4. Every push to `main` redeploys automatically.
 5. Copy your `*.vercel.app` URL into Supabase's **Site URL** (step 2.3).
 
 ### 4. Make yourself an admin
