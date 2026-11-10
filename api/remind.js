@@ -73,7 +73,10 @@ module.exports = async (req, res) => {
   const tz = cfg.timezone || "America/Chicago";
   const date = (req.query && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || "") && req.query.date) || orgDate(1, tz);
   const site = (env.SITE_URL || `https://${req.headers["x-forwarded-host"] || req.headers.host}`).replace(/\/$/, "");
-  const sbHeaders = { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}`, "Content-Type": "application/json" };
+  const key = env.SUPABASE_SECRET_KEY.trim();
+  // New-style sb_secret_ keys go only in the apikey header; legacy JWT service_role keys also need Authorization.
+  const sbHeaders = { apikey: key, "Content-Type": "application/json" };
+  if (key.startsWith("eyJ")) sbHeaders.Authorization = `Bearer ${key}`;
 
   const [listRes, setRes] = await Promise.all([
     fetch(`${sbUrl}/rest/v1/rpc/reminder_list`, { method: "POST", headers: sbHeaders, body: JSON.stringify({ day: date }) }),
