@@ -1,16 +1,14 @@
 /*
- * Data layer. The UI (app.js) only talks to the object returned by createBackend(),
- * so the board works the same in Preview mode (browser-only demo) and Live mode (Supabase).
+ * Data layer. app.js only talks to the object createBackend() returns, so the app works the same
+ * in Preview mode (demo data in this browser) and Live mode (Supabase).
  *
- * Backend shape:
- *   mode            "preview" | "live"
- *   init(onChange)  start up; onChange() is called whenever data or login changes
- *   me()            { id, email, name, isAdmin } or null when signed out
- *   load(from, to)  { rows: [{ date, shiftId, lane, userId, name, at }], groups: [..5] }
- *   take(date, shiftId, lane), drop(date, shiftId, userId?), setName(name), saveGroups(list)
- *   signIn(email), signOut()
+ * load(from, to) → { teams, homes, employees, signups, settings }
+ *   teams:     [{ id, key, name, shortName, description, activities[], needsLicense, needs[6], color, sort, active }]
+ *   homes:     [{ id, name, cluster, location, residents, sort }]
+ *   employees: [{ id, userId, name, email, level, hireDate, weeklyTarget, hasLicense, hasCna, teams[], quizTeam, active, demo }]
+ *   signups:   [{ id, employeeId, date, block, teamId }]
+ *   settings:  { announcement, lockedMonths[] }
  */
-
 const SUPABASE_CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
 async function resolveConfig() {
@@ -21,166 +19,190 @@ async function resolveConfig() {
       const j = await r.json();
       if (j.supabaseUrl && j.supabaseAnonKey) Object.assign(cfg, j);
     }
-  } catch (_) { /* no Vercel function (local file or plain server) — fine */ }
+  } catch (_) {}
   return cfg;
 }
 
 async function createBackend() {
   const cfg = await resolveConfig();
   if (cfg.supabaseUrl && cfg.supabaseAnonKey) {
-    try { return await supabaseBackend(cfg); }
-    catch (e) { console.warn("Supabase unavailable, falling back to preview", e); }
+    try { return await supabaseBackend(cfg); } catch (e) { console.warn("Supabase unavailable, using preview", e); }
   }
   return previewBackend(cfg);
 }
 
+const friendlyError = (msg) => { const e = new Error(msg); e.friendly = msg; return e; };
+
+/* ---------------- shared demo data ---------------- */
+function demoTeams() {
+  return [
+    { id: 1, key: "house", name: "House & Daily Living + Job Coaches", shortName: "House & Daily Living", color: 0, sort: 1, needsLicense: false, needs: [2, 2, 2, 2, 2, 2], active: true,
+      description: "Keeps each home running and residents ready for the day, including job prep for Ochsner. Covers nights. No driver's license needed.",
+      activities: ["Cooking and meal prep", "Meal assistance (Meals on Wheels)", "Cleaning and housekeeping", "Homeroom", "Daily living skills", "Job prep for Ochsner"] },
+    { id: 2, key: "campus", name: "On-Campus Activities", shortName: "On-Campus", color: 1, sort: 2, needsLicense: false, needs: [0, 0, 2, 2, 2, 0], active: true,
+      description: "Active days on the 11-acre campus: garden, fitness, sports and crafts. No driver's license needed.",
+      activities: ["Music garden", "Campus walks", "Arts and crafts", "Board games", "Fitness center", "Sports and wellness classes"] },
+    { id: 3, key: "outings", name: "Community Outings", shortName: "Outings", color: 2, sort: 3, needsLicense: true, needs: [0, 0, 2, 2, 2, 0], active: true,
+      description: "Shopping, dining and events around New Orleans. Driver's license required.",
+      activities: ["Lakeside Mall", "Library", "Dollar Tree", "Off-campus lunch", "Community events", "Bowling at Colonial Lanes"] },
+    { id: 4, key: "learning", name: "Learning & Community", shortName: "Learning", color: 3, sort: 4, needsLicense: false, needs: [0, 0, 2, 2, 2, 0], active: true,
+      description: "Calm, on-campus learning: reading, journaling, music and structured classes.",
+      activities: ["Storytelling and reading", "Journaling", "Music appreciation", "Structured learning"] },
+  ];
+}
+function demoHomes() {
+  return Array.from({ length: 20 }, (_, i) => ({ id: i + 1, name: `Home ${i + 1}`, cluster: "ABCD"[Math.floor(i / 5)], location: i < 5 ? "Campus" : "Community", residents: 6 + ((i + 1) % 3), sort: i + 1 }));
+}
+function demoEmployees(today) {
+  const rows = [
+    ["Sally Thompson", "DSP I", 40, 40, true, false, ["outings", "house", "learning"]],
+    ["Marcus Johnson", "Lead DSP", 900, 40, true, true, ["outings"]],
+    ["Keisha Brown", "DSP II", 300, 40, true, false, ["outings", "campus"]],
+    ["Andre Williams", "DSP I", 60, 40, true, false, ["outings"]],
+    ["Tanya Davis", "Lead DSP", 1400, 40, false, true, ["house"]],
+    ["Robert Lee", "DSP II", 420, 40, false, false, ["house"]],
+    ["Gloria Martin", "DSP II", 250, 32, false, false, ["house", "learning"]],
+    ["Devon Harris", "DSP I", 20, 40, false, false, ["house"]],
+    ["Linda Nguyen", "DSP I", 90, 40, false, false, ["house"]],
+    ["Chris Jackson", "Lead DSP", 700, 40, true, false, ["campus"]],
+    ["Maria Lopez", "DSP II", 365, 40, false, false, ["campus"]],
+    ["Jamal Carter", "DSP I", 45, 40, false, false, ["campus", "learning"]],
+    ["Brianna White", "Lead DSP", 1100, 40, false, true, ["learning"]],
+    ["Ethan Clark", "DSP II", 200, 40, true, false, ["learning", "outings"]],
+    ["Nia Robinson", "DSP I", 30, 24, false, false, ["learning"]],
+    ["Paul Walker", "DSP II", 500, 40, false, false, ["house", "campus"]],
+  ];
+  const keyToId = { house: 1, campus: 2, outings: 3, learning: 4 };
+  return rows.map(([name, level, days, target, lic, cna, keys], i) => ({
+    id: "demo-" + i, userId: i === 0 ? "preview-me" : null, name, email: i === 0 ? "sally@example.com" : "", level,
+    hireDate: isoDate(addDaysD(today, -days)), weeklyTarget: target, hasLicense: lic, hasCna: cna,
+    teams: keys.map((k) => keyToId[k]), quizTeam: null, active: true, demo: true,
+  }));
+}
+function demoSignups(employees, teams, today) {
+  const out = []; let id = 1;
+  const taken = (d, b, t) => out.filter((s) => s.date === d && s.block === b && s.teamId === t).length;
+  employees.forEach((e, idx) => {
+    const i = idx + 1;
+    for (let k = -14; k <= 20; k++) {
+      const d = addDaysD(today, k), dow = d.getDay(), ds = isoDate(d);
+      if ((dow === 0 || dow === 6) && i % 3 !== 0) continue;
+      const mod = (a, n) => ((a % n) + n) % n;
+      if (mod(k + i, 7) === 5 || mod(k + i, 7) === 6) continue;
+      const t = e.teams[mod(k + i, e.teams.length)];
+      const team = teams.find((x) => x.id === t);
+      const b = team.key === "house" && i % 4 === 0 ? 0 : 2 + mod(k + i, 2);
+      if (taken(ds, b, t) >= team.needs[b] || taken(ds, b + 1, t) >= team.needs[b + 1]) continue;
+      if (out.some((s) => s.employeeId === e.id && s.date === ds && (s.block === b || s.block === b + 1))) continue;
+      out.push({ id: id++, employeeId: e.id, date: ds, block: b, teamId: t });
+      out.push({ id: id++, employeeId: e.id, date: ds, block: b + 1, teamId: t });
+    }
+  });
+  return out;
+}
+
 /* ---------------- Preview: demo data in localStorage ---------------- */
 function previewBackend(cfg) {
-  const KEY = "magnolia-preview-v1";
-  const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (_) { return null; } };
-  const write = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) {} };
-  let st = read();
-  if (!st) { st = seedDemo(cfg); write(st); }
+  const KEY = "magnolia-dsp-preview-v2";
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch (_) { return null; } };
+  const write = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (_) {} };
+  const seed = () => {
+    const teams = demoTeams(), employees = demoEmployees(today);
+    return { teams, homes: demoHomes(), employees, signups: demoSignups(employees, teams, today), settings: { announcement: "", lockedMonths: [] }, nextId: 100000, admins: {}, reminders: true };
+  };
+  let st = read() || seed(); write();
   let notify = () => {};
-  const ME = "local-me";
-  const fail = (msg) => { const e = new Error(msg); e.friendly = msg; throw e; };
-
+  const done = () => { write(); notify(); };
+  const meEmp = () => st.employees.find((e) => e.userId === "preview-me");
+  const checkTake = (date, block, teamId, employeeId) => {
+    const team = st.teams.find((t) => t.id === teamId);
+    if (!team || !team.needs[block]) throw friendlyError("That team doesn't work this block.");
+    if (st.signups.some((s) => s.employeeId === employeeId && s.date === date && s.block === block)) throw friendlyError("Already booked at that time.");
+    if (st.signups.filter((s) => s.date === date && s.block === block && s.teamId === teamId).length >= team.needs[block]) throw friendlyError("That shift is already full.");
+  };
   return {
     mode: "preview",
     async init(onChange) { notify = onChange; },
-    me() { return { id: ME, email: "", name: st.myName || "", isAdmin: true, reminders: st.reminders !== false }; },
+    me() { const e = meEmp(); return { userId: "preview-me", email: e ? e.email : "", isAdmin: true, reminders: st.reminders !== false }; },
     async load(from, to) {
-      const rows = st.rows.filter((r) => r.date >= from && r.date <= to)
-        .map((r) => ({ ...r, name: r.userId === ME ? (st.myName || "You") : r.name }));
-      const waitlist = (st.waitlist || []).filter((w) => w.date >= from && w.date <= to)
-        .map((w) => ({ ...w, name: w.userId === ME ? (st.myName || "You") : w.name }));
-      return { rows, groups: st.groups, waitlist, announcement: st.announcement || "" };
+      return { teams: st.teams, homes: st.homes, employees: st.employees, settings: st.settings,
+        signups: st.signups.filter((s) => s.date >= from && s.date <= to) };
     },
-    async take(date, shiftId, lane) {
-      if (st.rows.some((r) => r.date === date && r.shiftId === shiftId && r.lane === lane && r.userId !== ME)) fail("Someone already has that lane. Pick another.");
-      const mine = st.rows.find((r) => r.date === date && r.shiftId === shiftId && r.userId === ME);
-      if (mine) { mine.lane = lane; mine.at = Date.now(); }
-      else st.rows.push({ date, shiftId, lane, userId: ME, name: "", at: Date.now() });
-      st.waitlist = (st.waitlist || []).filter((w) => !(w.date === date && w.shiftId === shiftId && w.userId === ME));
-      write(st); notify();
+    async take(date, block, teamId, employeeId) {
+      const emp = employeeId || meEmp().id;
+      checkTake(date, block, teamId, emp);
+      st.signups.push({ id: st.nextId++, employeeId: emp, date, block, teamId }); done();
     },
-    async drop(date, shiftId, userId = ME) {
-      const gone = st.rows.find((r) => r.date === date && r.shiftId === shiftId && r.userId === userId);
-      st.rows = st.rows.filter((r) => r !== gone);
-      const wl = (st.waitlist || []).filter((w) => w.date === date && w.shiftId === shiftId).sort((a, b) => a.at - b.at);
-      if (gone && wl.length) { // same rule as the database: next person in line gets the lane
-        const w = wl[0];
-        st.rows.push({ date, shiftId, lane: gone.lane, userId: w.userId, name: w.name, at: Date.now() });
-        st.waitlist = st.waitlist.filter((x) => x !== w);
-      }
-      write(st); notify();
+    async drop(id) { st.signups = st.signups.filter((s) => s.id !== id); done(); },
+    async updateMe(patch) { Object.assign(meEmp(), patch); done(); },
+    async setReminders(on) { st.reminders = on; done(); },
+    async hrSaveEmployee(emp) {
+      if (emp.id) Object.assign(st.employees.find((e) => e.id === emp.id), emp);
+      else st.employees.push({ ...emp, id: "emp-" + st.nextId++, userId: null, email: "", demo: false, quizTeam: null });
+      done();
     },
-    async joinWaitlist(date, shiftId) {
-      st.waitlist ||= [];
-      if (!st.waitlist.some((w) => w.date === date && w.shiftId === shiftId && w.userId === ME))
-        st.waitlist.push({ date, shiftId, userId: ME, name: "", at: Date.now() });
-      write(st); notify();
+    async listAdmins() { return Object.keys(st.admins).filter((k) => st.admins[k]); },
+    async setAdmin(userId, on) { st.admins[userId] = on; done(); },
+    async saveTeam(team) {
+      if (team.id) Object.assign(st.teams.find((t) => t.id === team.id), team);
+      else st.teams.push({ ...team, id: st.nextId++, key: "team" + st.nextId, active: true, sort: st.teams.length + 1 });
+      done();
     },
-    async leaveWaitlist(date, shiftId) {
-      st.waitlist = (st.waitlist || []).filter((w) => !(w.date === date && w.shiftId === shiftId && w.userId === ME));
-      write(st); notify();
+    async saveHome(home) {
+      if (home.id) Object.assign(st.homes.find((h) => h.id === home.id), home);
+      else st.homes.push({ ...home, id: st.nextId++, sort: st.homes.length + 1 });
+      done();
     },
-    async saveAnnouncement(text) { st.announcement = text; write(st); notify(); },
-    async assign(date, shiftId, lane, userId) {
-      const { data: existing } = await sb.from("signups").select("id")
-        .eq("user_id", userId).eq("shift_date", date).eq("shift_id", shiftId).maybeSingle();
-      const q = existing
-        ? sb.from("signups").update({ lane }).eq("id", existing.id)
-        : sb.from("signups").insert({ user_id: userId, shift_date: date, shift_id: shiftId, lane });
-      const { error } = await q;
-      if (error) throw friendly(error);
-      ping();
+    async deleteHome(id) { st.homes = st.homes.filter((h) => h.id !== id); done(); },
+    async saveAnnouncement(text) { st.settings.announcement = text; done(); },
+    async setLock(month, on) {
+      const s = new Set(st.settings.lockedMonths); on ? s.add(month) : s.delete(month);
+      st.settings.lockedMonths = [...s]; done();
     },
-    async myHistory() {
-      const { data, error } = await sb.from("signups").select("shift_date,shift_id,lane").eq("user_id", me.id).order("shift_date");
-      if (error) throw friendly(error);
-      return data.map((r) => ({ date: r.shift_date, shiftId: r.shift_id, lane: r.lane }));
+    async wipeDemo() {
+      const ids = new Set(st.employees.filter((e) => e.demo && e.userId !== "preview-me").map((e) => e.id));
+      st.employees = st.employees.filter((e) => !ids.has(e.id));
+      st.signups = st.signups.filter((s) => !ids.has(s.employeeId)); done(); return ids.size;
     },
-    async setReminders(on) { st.reminders = on; write(st); notify(); },
-    async assign(date, shiftId, lane, userId, name) {
-      if (st.rows.some((r) => r.date === date && r.shiftId === shiftId && r.lane === lane)) fail("That lane was just taken.");
-      st.rows = st.rows.filter((r) => !(r.date === date && r.shiftId === shiftId && r.userId === userId));
-      st.rows.push({ date, shiftId, lane, userId, name: userId === ME ? "" : name, at: Date.now() });
-      write(st); notify();
-    },
-    async myHistory() { return st.rows.filter((r) => r.userId === ME).map((r) => ({ date: r.date, shiftId: r.shiftId, lane: r.lane })); },
-    async setName(name) { st.myName = name; write(st); notify(); },
-    async saveGroups(list) { st.groups = list; write(st); notify(); },
+    async hasAdmin() { return true; }, async claimAdmin() { return false; },
     async signIn() {}, async signOut() {},
-    async hasAdmin() { return true; },
-    async claimAdmin() { return false; },
-    async listPeople() {
-      const names = [...new Set(st.rows.filter((r) => r.userId !== ME).map((r) => r.name))];
-      st.admins ||= {};
-      return [{ id: ME, name: st.myName || "You", email: "you@example.com", isAdmin: true },
-        ...names.map((n) => ({ id: "demo-" + n, name: n, email: n.toLowerCase() + "@example.com", isAdmin: !!st.admins["demo-" + n] }))];
-    },
-    async setAdmin(id, on) { st.admins ||= {}; st.admins[id] = on; write(st); },
-    resetDemo() { st = seedDemo(cfg); write(st); notify(); },
+    resetDemo() { st = seed(); done(); },
   };
-}
-
-function seedDemo(cfg) {
-  const people = ["Ana", "Cara", "Dev", "Eli", "Maya", "Jo", "Sam"];
-  const rows = [];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  let seed = 7;
-  const rand = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
-  for (let i = 0; i < 40; i++) {
-    const d = new Date(today); d.setDate(d.getDate() + i);
-    if (!cfg.workdays.includes(d.getDay())) continue;
-    const date = isoDate(d);
-    for (const sh of cfg.shifts) {
-      const n = Math.floor(rand() * 5); // 0–4 lanes filled, so there are always gaps to show
-      const lanes = [0, 1, 2, 3, 4].sort(() => rand() - 0.5).slice(0, n);
-      lanes.forEach((lane, j) => {
-        const name = people[(i + j + lane) % people.length];
-        if (rows.some((r) => r.date === date && r.shiftId === sh.id && r.name === name)) return;
-        rows.push({ date, shiftId: sh.id, lane, userId: "demo-" + name, name, at: 0 });
-      });
-    }
-  }
-  return { rows, groups: [...cfg.defaultGroups], myName: "" };
 }
 
 /* ---------------- Live: Supabase ---------------- */
 async function supabaseBackend(cfg) {
   const { createClient } = await import(SUPABASE_CDN);
-  const sb = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-  });
+  const sb = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   let me = null, notify = () => {}, timer = null, channel = null;
-  const ping = () => { clearTimeout(timer); timer = setTimeout(() => notify(), 120); };
-
-  const friendly = (error) => {
-    const code = error && error.code;
-    let msg = "That didn't save. Check your connection and try again.";
-    if (code === "23505") msg = "Someone grabbed that lane a moment ago. Pick another.";
-    else if (code === "42501") msg = "You don't have permission for that (past dates can't be changed).";
-    else if (error && /JWT|session/i.test(error.message || "")) msg = "Your sign-in expired. Please sign in again.";
-    const e = new Error(msg); e.friendly = msg; e.cause = error; return e;
+  const ping = () => { clearTimeout(timer); timer = setTimeout(() => notify(), 150); };
+  const fail = (error) => {
+    const code = error && error.code, m = (error && error.message) || "";
+    if (code === "P0001") return friendlyError(m.endsWith(".") ? m : m + ".");
+    if (code === "23505") return friendlyError("You already have a shift at that time.");
+    if (code === "42501" || /row-level security/i.test(m)) return friendlyError("Not allowed: you can only take future shifts on your own teams, and not in a month HR has locked.");
+    if (/JWT|session/i.test(m)) return friendlyError("Your sign-in expired. Please sign in again.");
+    return friendlyError(m || "That didn't save. Check your connection and try again.");
   };
+  const toTeam = (t) => ({ id: t.id, key: t.key, name: t.name, shortName: t.short_name || t.name, description: t.description, activities: t.activities || [],
+    needsLicense: t.needs_license, needs: t.needs || [0, 0, 0, 0, 0, 0], color: t.color, sort: t.sort, active: t.active });
+  const toEmp = (e) => ({ id: e.id, userId: e.user_id, name: e.name, email: e.email, level: e.level, hireDate: e.hire_date, weeklyTarget: e.weekly_target,
+    hasLicense: e.has_license, hasCna: e.has_cna, teams: e.teams || [], quizTeam: e.quiz_team, active: e.active, demo: e.demo });
 
   async function refreshMe(session) {
     if (!session) { me = null; return; }
-    const u = session.user;
-    const { data } = await sb.from("profiles").select("name,is_admin,reminders").eq("id", u.id).maybeSingle();
-    me = { id: u.id, email: u.email || "", name: (data && data.name) || "", isAdmin: !!(data && data.is_admin), reminders: !data || data.reminders !== false };
+    const { data } = await sb.from("profiles").select("is_admin,reminders").eq("id", session.user.id).maybeSingle();
+    me = { userId: session.user.id, email: session.user.email || "", isAdmin: !!(data && data.is_admin), reminders: !data || data.reminders !== false };
   }
-
   function subscribe() {
     if (channel) sb.removeChannel(channel);
-    channel = sb.channel("board")
-      .on("postgres_changes", { event: "*", schema: "public", table: "signups" }, ping)
-      .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, ping)
-      .on("postgres_changes", { event: "*", schema: "public", table: "waitlist" }, ping)
-      .subscribe();
+    channel = sb.channel("dsp");
+    for (const table of ["dsp_signups", "employees", "teams", "settings"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, ping);
+    channel.subscribe();
   }
+  const rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); if (error) throw fail(error); return data; };
+  const run = async (q) => { const { error } = await q; if (error) throw fail(error); ping(); };
 
   return {
     mode: "live",
@@ -188,128 +210,78 @@ async function supabaseBackend(cfg) {
       notify = onChange;
       const { data } = await sb.auth.getSession();
       await refreshMe(data.session);
-      sb.auth.onAuthStateChange((_evt, session) => {
-        // Supabase recommends not awaiting inside this callback.
-        setTimeout(async () => { await refreshMe(session); subscribe(); notify(); }, 0);
-      });
+      sb.auth.onAuthStateChange((_e, session) => { setTimeout(async () => { await refreshMe(session); subscribe(); notify(); }, 0); });
       subscribe();
     },
     me() { return me; },
     async load(from, to) {
-      const settings = await sb.from("settings").select("*").eq("id", 1).maybeSingle();
-      const groups = (settings.data && settings.data.groups) || cfg.defaultGroups;
-      const announcement = (settings.data && settings.data.announcement) || "";
-      if (me) {
-        const { data, error } = await sb.from("signups")
-          .select("shift_date,shift_id,lane,user_id,created_at,profiles(name)")
-          .gte("shift_date", from).lte("shift_date", to);
-        if (error) throw friendly(error);
-        const wl = await sb.from("waitlist").select("shift_date,shift_id,user_id,created_at,profiles(name)")
-          .gte("shift_date", from).lte("shift_date", to);
-        const waitlist = (wl.data || []).map((w) => ({
-          date: w.shift_date, shiftId: w.shift_id, userId: w.user_id,
-          name: (w.profiles && w.profiles.name) || "Volunteer", at: Date.parse(w.created_at) || 0,
-        }));
-        return { groups, announcement, waitlist, rows: data.map((r) => ({
-          date: r.shift_date, shiftId: r.shift_id, lane: r.lane, userId: r.user_id,
-          name: (r.profiles && r.profiles.name) || "Volunteer", at: Date.parse(r.created_at) || 0,
-        })) };
-      }
-      const { data, error } = await sb.from("lane_status").select("shift_date,shift_id,lane")
-        .gte("shift_date", from).lte("shift_date", to);
-      if (error) throw friendly(error);
-      return { groups, announcement, waitlist: [], rows: data.map((r, i) => ({
-        date: r.shift_date, shiftId: r.shift_id, lane: r.lane, userId: "anon-" + i, name: "Volunteer", at: 0,
-      })) };
+      if (!me) return { teams: [], homes: [], employees: [], signups: [], settings: { announcement: "", lockedMonths: [] } };
+      const [t, h, e, s, set] = await Promise.all([
+        sb.from("teams").select("*").order("sort"),
+        sb.from("homes").select("*").order("sort"),
+        sb.from("employees").select("*").order("name"),
+        sb.from("dsp_signups").select("id,employee_id,shift_date,block,team_id").gte("shift_date", from).lte("shift_date", to),
+        sb.from("settings").select("announcement,locked_months").eq("id", 1).maybeSingle(),
+      ]);
+      const err = t.error || h.error || e.error || s.error;
+      if (err) throw fail(err);
+      return {
+        teams: t.data.map(toTeam), homes: h.data, employees: e.data.map(toEmp),
+        signups: s.data.map((r) => ({ id: r.id, employeeId: r.employee_id, date: r.shift_date, block: r.block, teamId: r.team_id })),
+        settings: { announcement: (set.data && set.data.announcement) || "", lockedMonths: (set.data && set.data.locked_months) || [] },
+      };
     },
-    async take(date, shiftId, lane) {
-      if (!me) throw friendly({ message: "session" });
-      const { data: existing } = await sb.from("signups").select("id")
-        .eq("user_id", me.id).eq("shift_date", date).eq("shift_id", shiftId).maybeSingle();
-      const q = existing
-        ? sb.from("signups").update({ lane, created_at: new Date().toISOString() }).eq("id", existing.id)
-        : sb.from("signups").insert({ shift_date: date, shift_id: shiftId, lane });
-      const { error } = await q;
-      if (error) throw friendly(error);
+    async take(date, block, teamId, employeeId) {
+      let emp = employeeId;
+      if (!emp) { const { data } = await sb.rpc("my_employee_id"); emp = data; }
+      await run(sb.from("dsp_signups").insert({ employee_id: emp, shift_date: date, block, team_id: teamId }));
+    },
+    async drop(id) { await run(sb.from("dsp_signups").delete().eq("id", id)); },
+    async updateMe(patch) {
+      const row = {};
+      if ("name" in patch) row.name = patch.name;
+      if ("teams" in patch) row.teams = patch.teams;
+      if ("hasLicense" in patch) row.has_license = patch.hasLicense;
+      if ("hasCna" in patch) row.has_cna = patch.hasCna;
+      if ("quizTeam" in patch) row.quiz_team = patch.quizTeam;
+      await run(sb.from("employees").update(row).eq("user_id", me.userId));
+      if ("name" in patch) await sb.from("profiles").update({ name: patch.name }).eq("id", me.userId);
+    },
+    async setReminders(on) { await run(sb.from("profiles").update({ reminders: on }).eq("id", me.userId)); me = { ...me, reminders: on }; },
+    async hrSaveEmployee(emp) {
+      await rpc("hr_save_employee", { p_id: emp.id || null, p_name: emp.name, p_level: emp.level, p_target: emp.weeklyTarget, p_teams: emp.teams,
+        p_license: emp.hasLicense, p_cna: emp.hasCna, p_active: emp.active !== false, p_hire: emp.hireDate || null });
       ping();
     },
-    async drop(date, shiftId, userId) {
-      const { error } = await sb.from("signups").delete()
-        .eq("user_id", userId || me.id).eq("shift_date", date).eq("shift_id", shiftId);
-      if (error) throw friendly(error);
-      ping();
+    async listAdmins() { const data = await rpc("admin_people"); return data.filter((p) => p.is_admin).map((p) => p.id); },
+    async setAdmin(userId, on) { await rpc("set_admin", { target: userId, make_admin: on }); ping(); },
+    async saveTeam(team) {
+      const row = { name: team.name, short_name: team.shortName, description: team.description, activities: team.activities,
+        needs_license: team.needsLicense, needs: team.needs, color: team.color, active: team.active !== false };
+      if (team.id) await run(sb.from("teams").update(row).eq("id", team.id));
+      else await run(sb.from("teams").insert({ ...row, key: "team-" + Date.now(), sort: 99 }));
     },
-    async setName(name) {
-      const { error } = await sb.from("profiles").update({ name }).eq("id", me.id);
-      if (error) throw friendly(error);
-      me = { ...me, name }; ping();
+    async saveHome(home) {
+      const row = { name: home.name, cluster: home.cluster, location: home.location, residents: home.residents };
+      if (home.id) await run(sb.from("homes").update(row).eq("id", home.id));
+      else await run(sb.from("homes").insert({ ...row, sort: 99 }));
     },
-    async saveGroups(list) {
-      const { error } = await sb.from("settings").update({ groups: list }).eq("id", 1);
-      if (error) throw friendly(error);
-      ping();
-    },
+    async deleteHome(id) { await run(sb.from("homes").delete().eq("id", id)); },
+    async saveAnnouncement(text) { await run(sb.from("settings").update({ announcement: text }).eq("id", 1)); },
+    async setLock(month, on) { await rpc("hr_set_lock", { p_month: month, p_locked: on }); ping(); },
+    async wipeDemo() { const n = await rpc("hr_wipe_demo"); ping(); return n; },
     async signIn(email) {
-      const { error } = await sb.auth.signInWithOtp({
-        email, options: { emailRedirectTo: location.origin + location.pathname },
-      });
-      if (error) { const e = new Error(error.message); e.friendly = error.message; throw e; }
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+      if (error) throw friendlyError(error.message);
     },
     async signOut() { await sb.auth.signOut(); me = null; notify(); },
     async hasAdmin() { const { data } = await sb.rpc("has_admin"); return !!data; },
-    async joinWaitlist(date, shiftId) {
-      const { error } = await sb.from("waitlist").insert({ shift_date: date, shift_id: shiftId });
-      if (error && error.code !== "23505") throw friendly(error);
-      ping();
-    },
-    async leaveWaitlist(date, shiftId) {
-      const { error } = await sb.from("waitlist").delete().eq("user_id", me.id).eq("shift_date", date).eq("shift_id", shiftId);
-      if (error) throw friendly(error);
-      ping();
-    },
-    async assign(date, shiftId, lane, userId) {
-      const { data: existing } = await sb.from("signups").select("id")
-        .eq("user_id", userId).eq("shift_date", date).eq("shift_id", shiftId).maybeSingle();
-      const q = existing
-        ? sb.from("signups").update({ lane }).eq("id", existing.id)
-        : sb.from("signups").insert({ user_id: userId, shift_date: date, shift_id: shiftId, lane });
-      const { error } = await q;
-      if (error) throw friendly(error);
-      ping();
-    },
-    async myHistory() {
-      const { data, error } = await sb.from("signups").select("shift_date,shift_id,lane").eq("user_id", me.id).order("shift_date");
-      if (error) throw friendly(error);
-      return data.map((r) => ({ date: r.shift_date, shiftId: r.shift_id, lane: r.lane }));
-    },
-    async setReminders(on) {
-      const { error } = await sb.from("profiles").update({ reminders: on }).eq("id", me.id);
-      if (error) throw friendly(error);
-      me = { ...me, reminders: on }; ping();
-    },
-    async saveAnnouncement(text) {
-      const { error } = await sb.from("settings").update({ announcement: text }).eq("id", 1);
-      if (error) throw friendly(error);
-      ping();
-    },
     async claimAdmin() {
-      const { data, error } = await sb.rpc("claim_first_admin");
-      if (error) throw friendly(error);
-      const { data: sess } = await sb.auth.getSession(); await refreshMe(sess.session); notify();
-      return !!data;
-    },
-    async listPeople() {
-      const { data, error } = await sb.rpc("admin_people");
-      if (error) throw friendly(error);
-      return data.map((p) => ({ id: p.id, name: p.name || "", email: p.email || "", isAdmin: p.is_admin, joined: p.created_at }));
-    },
-    async setAdmin(id, on) {
-      const { error } = await sb.rpc("set_admin", { target: id, make_admin: on });
-      if (error) { const e = new Error(error.message); e.friendly = error.message; throw e; }
+      const ok = await rpc("claim_first_admin");
+      const { data } = await sb.auth.getSession(); await refreshMe(data.session); notify(); return !!ok;
     },
   };
 }
 
-function isoDate(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+function isoDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function addDaysD(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }

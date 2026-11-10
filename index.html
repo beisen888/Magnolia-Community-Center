@@ -3,61 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>Magnolia Shift Board</title>
-  <meta name="description" content="Sign up for volunteer shifts. Every lane rotates through five groups so each hour is fully covered.">
+  <title>Magnolia DSP Schedule</title>
+  <meta name="description" content="Magnolia Community Services staff scheduling: activity teams, 4-hour shifts, weekly hours.">
+  <meta name="robots" content="noindex">
   <meta name="theme-color" content="#1F4D3D">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="manifest" href="manifest.webmanifest">
-  <meta property="og:title" content="Magnolia Shift Board">
-  <meta property="og:description" content="Pick a day, take an open lane, and you're on the schedule.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-
 <header class="top"><div class="wrap">
   <div class="brand">
-    <svg viewBox="0 0 40 40" aria-hidden="true"><g fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 33C13 27 12 17 20 7c8 10 7 20 0 26Z" fill="color-mix(in srgb,var(--g1) 30%,transparent)"/><path d="M19 33C10 32 5 24 6 15c8 2 13 9 13 18Z"/><path d="M21 33c9-1 14-9 13-18-8 2-13 9-13 18Z"/></g></svg>
-    <div><div class="eyebrow" id="org">Magnolia</div><h1 id="board">Shift Board</h1></div>
+    <svg viewBox="0 0 40 40" aria-hidden="true"><g fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 33C13 27 12 17 20 7c8 10 7 20 0 26Z" fill="color-mix(in srgb,var(--t1) 30%,transparent)"/><path d="M19 33C10 32 5 24 6 15c8 2 13 9 13 18Z"/><path d="M21 33c9-1 14-9 13-18-8 2-13 9-13 18Z"/></g></svg>
+    <div><div class="eyebrow" id="org">Magnolia Community Services</div><h1 id="app">DSP Schedule</h1></div>
   </div>
-  <div class="mnav"><button id="prev" aria-label="Previous month">‹</button><span id="mlabel"></span><button id="next" aria-label="Next month">›</button></div>
   <div class="who" id="who"></div>
   <button class="iconbtn" id="theme" aria-label="Switch light or dark mode" title="Light / dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/></svg></button>
-</div></header>
-
-<section class="legend"><div class="wrap">
-  <p class="lede">Pick a day, then take an open <b>lane</b> in a shift. Every lane rotates through the five groups one hour at a time, so a full shift covers every group every hour.</p>
-  <div class="groups" id="groups"></div>
-</div></section>
+</div>
+<nav class="tabs wrap" id="tabs" role="tablist"></nav>
+</header>
 
 <main class="wrap">
   <div id="notice"></div>
-  <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="month" id="t-month">Month</button>
-    <button role="tab" data-tab="open" id="t-open">Open spots</button>
-    <button role="tab" data-tab="mine" id="t-mine">My schedule</button>
-    <button role="tab" data-tab="how" id="t-how">How the rotation works</button>
-    <button role="tab" data-tab="admin" id="t-admin" hidden>Admin</button>
-  </nav>
-  <section id="v-month" hidden>
-    <div class="mgrid">
-      <div><div class="dow"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div><div class="cal" id="cal"></div></div>
-      <aside class="day" id="day"></aside>
-    </div>
-  </section>
-  <section id="v-open" hidden></section>
-  <section id="v-mine" hidden></section>
-  <section id="v-how" hidden></section>
-  <section id="v-admin" hidden></section>
+  <section id="view"></section>
 </main>
 <footer class="footer wrap" id="footer"></footer>
 
 <dialog id="signin">
   <form id="signin-form" method="dialog">
-    <h2>Sign in to sign up</h2>
-    <p>Enter your email and we'll send you a one-tap sign-in link. No password needed.</p>
+    <h2>Sign in</h2>
+    <p>Enter your work or personal email and we'll send a one-tap sign-in link. No password.</p>
     <label for="email">Email</label>
     <input id="email" type="email" autocomplete="email" required placeholder="you@example.com">
     <div class="row">

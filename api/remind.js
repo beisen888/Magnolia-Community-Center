@@ -27,36 +27,29 @@ function orgDate(offsetDays, tz) {
 
 const hr = (h) => `${h % 12 || 12} ${h >= 12 ? "PM" : "AM"}`;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const COLORS = ["#2E7A58", "#BC3F69", "#2D69AC", "#A0660A", "#6A50B0"];
 
-function buildEmail({ cfg, groups, date, person, site }) {
-  const LETTERS = "ABCDE";
-  const groupAt = (lane, hour) => (((lane + (hour - cfg.dayStart)) % 5) + 5) % 5;
+function buildEmail({ cfg, date, person, site }) {
   const nice = new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
-  const blocks = person.shifts.map((s) => {
-    const sh = cfg.shifts.find((x) => x.id === s.shift_id);
-    if (!sh) return null;
-    const rows = [];
-    for (let h = sh.start; h < sh.end; h++) {
-      const g = groupAt(s.lane, h);
-      rows.push({ h, g });
-    }
-    return { sh, lane: s.lane, rows };
-  }).filter(Boolean);
-  const first = blocks[0];
-  const subject = `Reminder: you're on ${first.sh.label.toLowerCase()} shift tomorrow (${hr(first.sh.start)})`;
-  const text = [`Hi ${person.name || "there"},`, "", `You're scheduled ${nice}:`, ""]
-    .concat(...blocks.map((b) => [`${b.sh.label}, ${hr(b.sh.start)}–${hr(b.sh.end)} · lane ${b.lane + 1}`, ...b.rows.map((r) => `  ${hr(r.h)}: ${LETTERS[r.g]} · ${groups[r.g]}`), ""]))
-    .concat([`Can't make it? Drop your shift so someone on the waitlist gets it: ${site}/#day-${date}`, "", `— ${cfg.orgName} ${cfg.boardName}`]).join("\n");
+  const blocks = person.shifts.slice().sort((a, b) => a.block - b.block);
+  // merge back-to-back blocks on the same team into one line (an 8-hour day reads as one shift)
+  const runs = [];
+  for (const s of blocks) {
+    const last = runs[runs.length - 1];
+    if (last && last.team === s.team && last.end === s.block) last.end = s.block + 1;
+    else runs.push({ team: s.team, start: s.block, end: s.block + 1 });
+  }
+  const label = (r) => `${hr(cfg.blocks[r.start].start)}–${hr(cfg.blocks[r.end - 1].end % 24)}`;
+  const first = runs[0];
+  const subject = `Reminder: you work tomorrow, ${label(first)} (${first.team})`;
+  const text = [`Hi ${person.name || "there"},`, "", `You're scheduled ${nice}:`, "", ...runs.map((r) => `• ${label(r)} · ${r.team} (${(r.end - r.start) * 4} hrs)`), "",
+    `Can't make it? Tell your Lead DSP or HR as soon as possible.`, `Your schedule: ${site}/#home`, "", `— ${cfg.orgName}`].join("\n");
   const html = `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;color:#13201B;max-width:480px">
-  <p style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#55665E;margin:0">${esc(cfg.orgName)} ${esc(cfg.boardName)}</p>
-  <h2 style="margin:4px 0 12px">See you tomorrow, ${esc(person.name || "volunteer")}</h2>
-  <p style="margin:0 0 16px;color:#55665E">${esc(nice)}</p>
-  ${blocks.map((b) => `<div style="border:1px solid #D5DFD9;border-radius:10px;padding:12px 14px;margin-bottom:12px">
-    <b>${esc(b.sh.label)}</b> · ${hr(b.sh.start)}–${hr(b.sh.end)} · lane ${b.lane + 1}
-    <table style="margin-top:8px;border-collapse:collapse">${b.rows.map((r) => `<tr><td style="padding:2px 10px 2px 0;font-family:monospace;color:#55665E">${hr(r.h)}</td><td><span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:5px;color:#fff;font:12px monospace;background:${COLORS[r.g]}">${LETTERS[r.g]}</span> ${esc(groups[r.g])}</td></tr>`).join("")}</table></div>`).join("")}
-  <p style="margin:16px 0"><a href="${site}/#day-${date}" style="background:#1F4D3D;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none;font-weight:600">Open the board</a></p>
-  <p style="font-size:13px;color:#55665E">Can't make it? Drop your shift on the board so the next person on the waitlist gets it. You can turn these emails off on the My schedule tab.</p></div>`;
+  <p style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#55665E;margin:0">${esc(cfg.orgName)}</p>
+  <h2 style="margin:4px 0 12px">See you tomorrow, ${esc((person.name || "").split(" ")[0] || "there")}</h2>
+  <p style="margin:0 0 14px;color:#55665E">${esc(nice)}</p>
+  ${runs.map((r) => `<div style="border:1px solid #D5DFD9;border-left:5px solid #1F4D3D;border-radius:10px;padding:12px 14px;margin-bottom:10px"><b style="font-size:17px">${label(r)}</b><br>${esc(r.team)} · ${(r.end - r.start) * 4} hours</div>`).join("")}
+  <p style="margin:16px 0"><a href="${site}/#home" style="background:#1F4D3D;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none;font-weight:600">Open my schedule</a></p>
+  <p style="font-size:13px;color:#55665E">Can't make it? Tell your Lead DSP or HR as soon as possible. You can turn these emails off on the My week tab.</p></div>`;
   return { subject, text, html };
 }
 
@@ -89,10 +82,7 @@ async function run(req, res) {
   const sbHeaders = { apikey: key, "Content-Type": "application/json" };
   if (key.startsWith("eyJ")) sbHeaders.Authorization = `Bearer ${key}`;
 
-  const [listRes, setRes] = await Promise.all([
-    fetch(`${sbUrl}/rest/v1/rpc/reminder_list`, { method: "POST", headers: sbHeaders, body: JSON.stringify({ day: date }) }),
-    fetch(`${sbUrl}/rest/v1/settings?id=eq.1&select=groups`, { headers: sbHeaders }),
-  ]);
+  const listRes = await fetch(`${sbUrl}/rest/v1/rpc/dsp_reminder_list`, { method: "POST", headers: sbHeaders, body: JSON.stringify({ day: date }) });
   if (!listRes.ok) {
     // Safe diagnostics: the key's type and length only, never the key itself.
     const shape = { type: key.startsWith("sb_secret_") ? "sb_secret" : key.startsWith("sb_publishable_") ? "publishable (wrong key)" : key.startsWith("eyJ") ? "legacy JWT" : "unknown",
@@ -100,20 +90,18 @@ async function run(req, res) {
     return res.status(502).json({ error: "supabase", detail: await listRes.text(), keyShape: shape });
   }
   const list = await listRes.json();
-  const settings = setRes.ok ? await setRes.json() : [];
-  const groups = (settings[0] && settings[0].groups) || cfg.defaultGroups;
 
   const people = {};
   for (const r of list) (people[r.email] ||= { email: r.email, name: r.name, shifts: [] }).shifts.push(r);
 
   const results = [];
   for (const person of Object.values(people)) {
-    const mail = buildEmail({ cfg, groups, date, person, site });
+    const mail = buildEmail({ cfg, date, person, site });
     if (dry) { results.push({ to: person.email, subject: mail.subject, preview: mail.text }); continue; }
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: env.REMINDER_FROM || `${cfg.orgName} Shifts <onboarding@resend.dev>`, to: [person.email], subject: mail.subject, text: mail.text, html: mail.html }),
+      body: JSON.stringify({ from: env.REMINDER_FROM || `Magnolia Schedule <onboarding@resend.dev>`, to: [person.email], subject: mail.subject, text: mail.text, html: mail.html }),
     });
     results.push({ to: person.email, ok: r.ok, status: r.status, error: r.ok ? undefined : (await r.text()).slice(0, 200) });
   }
