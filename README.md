@@ -1,32 +1,22 @@
-# Magnolia Shift Board
+# Magnolia DSP Schedule
 
-A volunteer sign-up board. Pick a day, take an open **lane**, and you're on the schedule. Every lane rotates through five groups one hour at a time, so a full shift covers every group every hour.
+Internal staff scheduling for **Magnolia Community Services**: DSPs work on activity-based teams, sign up for 4-hour shift blocks (two back-to-back = an 8-hour day), and track progress toward a 40-hour week. HR sees coverage for every block, team and home.
 
-**Stack:** plain HTML/CSS/JS (no build step) · **Supabase** for logins, database and live updates · **Vercel** for hosting · **GitHub** for the code · **Cursor** for editing.
+Built from the team's proposal: 4 activity teams (House & Daily Living + Job Coaches, On-Campus Activities, Community Outings, Learning & Community), 20 homes in clusters A–D with an hourly cluster rotation, the DSP I $16 → DSP II $16.50 → Lead DSP $17 ladder (+$0.50 CNA, +$0.50 overnight), and the "availability by the 20th, schedule published by the 28th" cycle.
 
-```
-You edit in Cursor ──push──▶ GitHub ──auto-deploy──▶ Vercel (live site)
-                                                        │
-                                   Supabase (logins + sign-ups) ◀── the browser talks to it directly
-```
+**Stack:** plain HTML/CSS/JS (no build step) · **Supabase** (logins, database, live updates) · **Vercel** (hosting + nightly reminder cron) · **Resend** (email) · **GitHub** · **Cursor**.
 
-## What's in it
+| Tab | Who | What it does |
+|---|---|---|
+| **My week** | Everyone | Hours vs 40-hour target (progress bar by team), est. pay, next shift with its cluster rotation, one-tap open shifts (4 or 8 hrs), profile, calendar export |
+| **Schedule** | Everyone | Month calendar with your shifts + daily staffing bar; day view by 4-hour block and team; take/drop shifts |
+| **Teams & homes** | Everyone | Team cards (activities, hours, license), join/leave, career ladder, homes by cluster, sample 12–4 PM rotation |
+| **Find my team** | Everyone | 6-question quiz that recommends a team and joins it |
+| **HR** | Admins | Coverage grid + KPIs, employees (levels, teams, targets, add people without logins), team staffing needs per block, homes, announcement, publish/lock months, remove demo data, CSV |
 
-| Tab | What it does |
-|---|---|
-| **Month** | Calendar with colored lane markers; click a day to take, switch, or drop a lane. |
-| **Open spots** | Every unfilled shift in the next 3 weeks, with one-tap "Take lane." Picks the lane that keeps your day continuous. |
-| **My schedule** | Your shifts, hours by group, and **Add to my calendar** (.ics file with 1-hour reminders). |
-| **How it works** | The rotation explained with an example grid. |
-| **Admin** *(admins only)* | Coverage %, volunteer hours, thinnest upcoming days, roster, CSV export, print, remove people, rename groups. |
+The database enforces the rules: DSPs only take future shifts on their own teams, nobody is double-booked, teams can't be overfilled, published months are locked for DSPs, and only HR can change levels, staffing and teams.
 
-Plus: **waitlist** with automatic fill when a lane opens · **repeat weekly** sign-ups · **admin assign** anyone to a lane · **announcement banner** · **nightly email reminders** (`api/remind.js`, Vercel cron + Resend; needs `RESEND_API_KEY`, `SUPABASE_SECRET_KEY`, `CRON_SECRET` env vars) · **all-time hours + printable certificate** · **Claim admin** + **People & admins** management.
-
-Also: email magic-link sign-in (no passwords), live updates across everyone's screens, the database blocks double-booking, past days are locked, dark mode, installs to a phone home screen.
-
-**Preview mode:** without Supabase keys, the site runs on demo data saved only in your browser. Good for designing in Cursor.
-
----
+**Demo data:** `supabase/demo-seed.sql` loads 16 demo DSPs (incl. Sally Thompson) with shifts from 2 weeks ago to 3 weeks ahead. HR → Settings → *Remove demo data* clears them.
 
 ## Setup (about 20 minutes, all free tiers)
 
@@ -37,7 +27,7 @@ Also: email magic-link sign-in (no passwords), live updates across everyone's sc
 
 ### 2. Create the database (Supabase)
 1. Go to [supabase.com](https://supabase.com) → **New project** (pick a region near you, save the password somewhere).
-2. Left sidebar → **SQL Editor** → **New query** → paste all of `supabase/schema.sql` → **Run**.
+2. Left sidebar → **SQL Editor** → **New query** → paste all of `supabase/schema.sql` → **Run**. Then do the same with `supabase/dsp.sql`, and optionally `supabase/demo-seed.sql`.
 3. **Authentication → URL Configuration:** set **Site URL** to your Vercel URL (you'll get it in step 3; come back and fill it in). Add `http://localhost:3000` under **Redirect URLs** for local testing.
 
 ### 3. Deploy on Vercel

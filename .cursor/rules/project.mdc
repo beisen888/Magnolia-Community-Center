@@ -1,26 +1,32 @@
 ---
-description: How the Magnolia Shift Board is built. Read before changing anything.
+description: How the Magnolia DSP Schedule is built. Read before changing anything.
 alwaysApply: true
 ---
 
-# Magnolia Shift Board
+# Magnolia DSP Schedule
 
-Plain HTML/CSS/JavaScript. No framework, no build step. Vercel serves the files as-is.
+Internal scheduling app for Magnolia Community Services DSPs. Plain HTML/CSS/JavaScript, no framework, no build step. Vercel serves the files as-is.
+
+## Concepts
+- **Teams** (activity groups): House & Daily Living + Job Coaches, On-Campus, Outings, Learning. Stored in the `teams` table; HR edits them in the app.
+- **Blocks**: 6 four-hour blocks per day, index 0–5 (12–4 AM … 8 PM–12 AM), defined in `config.js` `blocks`. `teams.needs[i]` = DSPs needed in block i.
+- **Employees** (`employees` table): one per DSP. `user_id` links a login; HR can add people without logins. `teams` = int[] of team ids they can work.
+- **Sign-ups** (`dsp_signups`): employee + date + block + team. 8-hour day = two consecutive blocks.
+- **Homes**: 20 homes in clusters A–D. During a daytime block each team rotates through clusters hourly (`rotation()` in app.js).
+- **Pay**: `config.js` `pay` by level + CNA bonus + overnight bonus.
 
 ## Files
-- `index.html`: page skeleton (header, tabs, sign-in dialog). Loads the scripts in this order: config.js → data.js → ics.js → app.js.
-- `config.js`: org name, shift times, workdays, default group names. Change the schedule here.
-- `app.js`: all UI rendering. One state object `S`, one `render()` that redraws from state. Each tab has its own `renderX()` function.
-- `data.js`: the ONLY place that talks to storage. `createBackend()` returns either the Preview backend (localStorage demo) or the Supabase backend. Both expose the same methods: `init, me, load, take, drop, setName, saveGroups, signIn, signOut`. Add new data features to BOTH.
-- `ics.js`: calendar-file export.
-- `styles.css`: design tokens live in `:root` (light) and the dark-mode blocks. Use the CSS variables, never hard-coded colors.
-- `api/config.js`: Vercel serverless function that returns the public Supabase URL + anon key from env vars.
-- `supabase/schema.sql`: tables, row-level security, realtime. Any new table needs RLS policies.
+- `index.html`: shell (header, tab bar, sign-in dialog). Scripts load in order: config.js → data.js → ics.js → app.js.
+- `config.js`: org name, blocks, pay, cycle dates. Not teams/homes (those live in the database).
+- `app.js`: all UI. One state object `S`, `render()` redraws the current tab. Each tab = a `viewX()` function. Clicks go through `data-act` attributes → the `actions` map.
+- `data.js`: the ONLY place that talks to storage. `previewBackend` (demo data in localStorage) and `supabaseBackend` expose the same methods. Add new data features to BOTH.
+- `styles.css`: tokens in `:root` + dark mode blocks. Team colors are `--t0`…`--t7`, applied with class `tcN` and `var(--tc)`. Never hard-code colors.
+- `api/config.js`, `api/remind.js`: Vercel serverless functions (public config; nightly reminder emails via Resend).
+- `supabase/schema.sql` (base: profiles, admin, settings), `supabase/dsp.sql` (teams, homes, employees, dsp_signups, rules), `supabase/demo-seed.sql` (demo data).
 
 ## Rules
-- The rotation formula `groupAt(lane, hour)` is the core of the app. Don't change it without asking.
-- Exactly 5 lanes / 5 groups (colors g0–g4 and the database check constraint depend on it).
+- Database changes go in `supabase/*.sql` and must be re-runnable; every new table needs row-level security. They do NOT apply themselves; someone must run them in the Supabase SQL Editor.
 - Always escape user text with `esc()` before putting it in HTML.
-- Keep it accessible: real `<button>`s, aria labels, visible focus, works at 375px wide.
-- Keep copy short and friendly. No emoji in the UI.
-- Never put the Supabase service_role key in the frontend or in git.
+- Mobile first: everything must work at 375px wide. Real buttons, aria labels, visible focus.
+- Keep copy short and plain. No emoji in the UI.
+- Never put the Supabase secret / service_role key in the frontend or in git.
