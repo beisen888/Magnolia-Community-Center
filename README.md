@@ -4,7 +4,7 @@ Internal staff scheduling for **Magnolia Community Services**: DSPs work on acti
 
 Built from the team's proposal: 4 activity teams (House & Daily Living + Job Coaches, On-Campus Activities, Community Outings, Learning & Community), 20 homes in clusters A–D with an hourly cluster rotation, the DSP I $16 → DSP II $16.50 → Lead DSP $17 ladder (+$0.50 CNA, +$0.50 overnight), and the "availability by the 20th, schedule published by the 28th" cycle.
 
-**Stack:** plain HTML/CSS/JS (no build step) · **Supabase** (logins, database, live updates) · **Vercel** (hosting + nightly reminder cron) · **Resend** (email) · **GitHub** · **Cursor**.
+**Stack:** plain HTML/CSS/JS (no build step) · **Supabase** (logins, database, live updates) · **Vercel** (hosting + email/alert functions) · **Resend** (email) · **GitHub** · **Cursor**.
 
 | Tab | Who | What it does |
 |---|---|---|
@@ -51,6 +51,16 @@ Refresh the site. The **Admin** tab appears.
 Vercel → Project → **Settings → Domains** → add e.g. `shifts.yourorg.org`. Update the Supabase Site URL to match.
 
 ---
+
+## Houses, outing clusters, waitlists and phone alerts (v2.2)
+
+- **House & Daily Living** sign-ups name the exact house (20 houses, 2 DSPs per house per block; HR can change the number in HR → Teams & staffing).
+- **Outing clusters:** HR enters residents (first name, house, "needs their own DSP"). Every month the app deals them into new clusters of 8 or fewer. Each cluster goes out once a day (the time rotates); an outing needs 2 DSPs plus 1 per resident who needs their own, and runs about 30 minutes longer when one is along.
+- **Waitlist:** when a slot is full, up to 10 DSPs can wait. DSPs can drop a shift until 48 hours before it starts; the first person waiting gets it automatically and an alert.
+- **Phone alerts:** push to DSPs' phones 24 hours and 1 hour before each shift, with email as backup.
+  1. HR → Settings → **Create alert keys**. Copy the private key into Vercel as `VAPID_PRIVATE_KEY`, then redeploy.
+  2. Run `supabase/alerts-cron.sql` once in the Supabase SQL editor (pings `/api/notify` every 10 minutes).
+  3. Each DSP taps **Turn on phone alerts** under My week → My profile. iPhone users first add the site to their home screen (Share → Add to Home Screen).
 
 ## Handing it to a client
 See **HANDOFF.md**: transfer this board, or let them build their own from a template.

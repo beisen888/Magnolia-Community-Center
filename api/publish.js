@@ -19,22 +19,22 @@ function buildEmail(cfg, week, person, site) {
   const runs = [];
   for (const s of person.shifts) {
     const last = runs[runs.length - 1];
-    if (last && last.date === s.shift_date && last.team === s.team && last.end === s.block) last.end = s.block + 1;
-    else runs.push({ date: s.shift_date, team: s.team, start: s.block, end: s.block + 1 });
+    if (last && last.date === s.shift_date && last.team === s.team && last.place === (s.place || "") && last.end === s.block) last.end = s.block + 1;
+    else runs.push({ date: s.shift_date, team: s.team, place: s.place || "", start: s.block, end: s.block + 1 });
   }
   const hours = person.shifts.length * 4;
   const time = (r) => `${hr(cfg.blocks[r.start].start)}–${hr(cfg.blocks[r.end - 1].end)}`;
   const weekLabel = new Date(week + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
   const subject = `Your schedule for the week of ${weekLabel} (${hours} hrs)`;
   const text = [`Hi ${(person.name || "").split(" ")[0] || "there"},`, "", `Here is your final schedule for the week of ${weekLabel}:`, "",
-    ...runs.map((r) => `${day(r.date)}: ${time(r)} · ${r.team}`), "", `Total: ${hours} hours`, "",
+    ...runs.map((r) => `${day(r.date)}: ${time(r)} · ${r.team}${r.place ? " · " + r.place : ""}`), "", `Total: ${hours} hours`, "",
     `Questions or a conflict? Talk to your Lead DSP or HR.`, `View it anytime: ${site}/#home`, "", `— ${cfg.orgName}`].join("\n");
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#1F2A20;max-width:520px">
   <p style="font-family:Georgia,serif;font-size:26px;color:#29572D;margin:0">Magnolia</p>
   <p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6B4A2E;margin:2px 0 18px">Community Services · DSP Schedule</p>
   <p style="margin:0 0 6px">Hi ${esc((person.name || "").split(" ")[0] || "there")},</p>
   <p style="margin:0 0 16px">Here is your <b>final schedule</b> for the week of ${esc(weekLabel)}.</p>
-  <table style="border-collapse:collapse;width:100%;font-size:15px">${runs.map((r) => `<tr><td style="padding:9px 10px;border-bottom:1px solid #E3DCC4;font-weight:bold;white-space:nowrap">${esc(day(r.date))}</td><td style="padding:9px 10px;border-bottom:1px solid #E3DCC4;white-space:nowrap">${time(r)}</td><td style="padding:9px 10px;border-bottom:1px solid #E3DCC4;color:#4A4E57">${esc(r.team)}</td></tr>`).join("")}</table>
+  <table style="border-collapse:collapse;width:100%;font-size:15px">${runs.map((r) => `<tr><td style="padding:9px 10px;border-bottom:1px solid #E3DCC4;font-weight:bold;white-space:nowrap">${esc(day(r.date))}</td><td style="padding:9px 10px;border-bottom:1px solid #E3DCC4;white-space:nowrap">${time(r)}</td><td style="padding:9px 10px;border-bottom:1px solid #E3DCC4;color:#4A4E57">${esc(r.team)}${r.place ? `<br><b>${esc(r.place)}</b>` : ""}</td></tr>`).join("")}</table>
   <p style="margin:14px 0;font-size:15px"><b>Total: ${hours} hours</b></p>
   <p style="margin:18px 0"><a href="${site}/#home" style="background:#29572D;color:#fff;padding:10px 16px;border-radius:5px;text-decoration:none;font-weight:bold">Open my schedule</a></p>
   <p style="font-size:13px;color:#4A4E57">Questions or a conflict? Talk to your Lead DSP or HR.</p></div>`;

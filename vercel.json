@@ -26,11 +26,14 @@
     },
     "api/publish.js": {
       "includeFiles": "config.js"
+    },
+    "api/notify.js": {
+      "includeFiles": "config.js"
     }
   },
   "crons": [
     {
-      "path": "/api/remind",
+      "path": "/api/notify",
       "schedule": "0 23 * * *"
     }
   ]

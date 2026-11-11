@@ -35,7 +35,9 @@ Demo data: 16 fake DSPs (incl. "Sally Thompson") with shifts 2 weeks back to 3 w
 - `data.js`: the only file that talks to storage. Two backends with the same methods: **Preview** (demo data in localStorage, used when no Supabase keys) and **Supabase** (live). New data features must be added to both.
 - `styles.css`: brand tokens in `:root` (Magnolia greens `#29572D` / `#497A39`, cream `#F3EDD6`, gold `#DEA710`, fonts Alice + Source Sans 3). Team colors `--t0…--t7` via class `tcN`.
 - `config.js`: org name, the 6 shift blocks, sign-up window. Teams/homes/people live in the database.
-- `api/remind.js` (nightly reminder emails, Vercel cron) and `api/publish.js` (weekly schedule emails). Both use Resend.
+- `api/notify.js` (shift alerts: web push via `api/_webpush.js` + Resend email, 24h and 1h before; also "off the waitlist" messages; pinged every 10 min by Supabase pg_cron, see `supabase/alerts-cron.sql`), `api/publish.js` (weekly schedule emails), `sw.js` (service worker that shows alerts). `api/remind.js` is the old nightly email and is no longer scheduled.
+- Staffing rules live in `data.js` (`slotNeed`, `clusterBlock`, `clusterMap`) and mirror `slot_need` / `cluster_block` in `supabase/dsp.sql` v2.2. Keep them in sync.
+- Teams have `staffing`: `fixed` (one pool), `home` (per house), `cluster` (per monthly outing cluster). Sign-ups carry `homeId` / `clusterNo`.
 - `supabase/schema.sql`, `supabase/dsp.sql`, `supabase/demo-seed.sql`: database + security rules. **Editing these files does not change the live database**; Claude runs them in Supabase.
 
 ## Run it locally

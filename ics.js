@@ -3,8 +3,8 @@ function buildIcs(events, calName) {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
   const esc = (s) => String(s).replace(/\\/g, "\\\\").replace(/[,;]/g, (c) => "\\" + c).replace(/\n/g, "\\n");
   const at = (date, h) => {
-    const d = new Date(date + "T00:00:00"); d.setHours(h);
-    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}0000`;
+    const d = new Date(date + "T00:00:00"); d.setMinutes(Math.round(h * 60));  // h can be 16.5 (an outing running 30 min long)
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}00`;
   };
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Magnolia//DSP Schedule//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", `X-WR-CALNAME:${esc(calName)}`];
   for (const e of events) {
