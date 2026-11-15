@@ -11,6 +11,7 @@
  *   residents: [{ id, firstName, homeId, ownDsp, active, demo }]
  *   clusters:  [{ month: "YYYY-MM", residentId, clusterNo }]
  *   waitlist:  [{ id, employeeId, date, block, teamId, homeId, clusterNo, createdAt }]
+ *   temps:     [{ date, block, teamId, homeId, clusterNo, count }]   temp (agency) DSPs HR booked; they fill spots
  *   settings:  { announcement, lockedWeeks[], vapidPublic }
  */
 const SUPABASE_CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
@@ -140,24 +141,43 @@ function demoEmployees(today) {
     ["Paul Walker", "DSP II", 500, 40, false, false, ["house", "campus"]],
   ];
   const keyToId = { house: 1, campus: 2, outings: 3, learning: 4 };
+  const mk = (id, name, level, days, lic, cna, teams) => ({ id, userId: null, name, email: "", level, hireDate: isoDate(addDaysD(today, -days)), weeklyTarget: 40, hasLicense: lic, hasCna: cna, teams, quizTeam: null, active: true, demo: true });
+  const extra = [];
+  // 180 House & Daily Living DSPs: 3 per house per 8-hour shift (nights, days, evenings), so 2 are on every day
+  for (let g = 0; g < 180; g++) extra.push(mk("demo-h" + g, `${STAFF_FIRST[g % 20]} ${STAFF_LAST[Math.floor(g / 20)]}`, g % 9 === 3 ? "Lead DSP" : g % 3 === 1 ? "DSP II" : "DSP I", 30 + ((g * 37) % 1500), g % 4 === 0, g % 7 === 0, [1]));
+  // 24 Community Outings DSPs
+  for (let g = 0; g < 24; g++) extra.push(mk("demo-o" + g, `${STAFF_FIRST[(g * 3 + 5) % 20]} ${STAFF_LAST2[g % 6]}`, g % 8 === 0 ? "Lead DSP" : g % 2 ? "DSP II" : "DSP I", 60 + ((g * 53) % 1200), true, g % 5 === 0, [3]));
   return rows.map(([name, level, days, target, lic, cna, keys], i) => ({
     id: "demo-" + i, userId: i === 0 ? "preview-me" : null, name, email: i === 0 ? "sally@example.com" : "", level,
     hireDate: isoDate(addDaysD(today, -days)), weeklyTarget: target, hasLicense: lic, hasCna: cna,
     teams: keys.map((k) => keyToId[k]), quizTeam: null, active: true, demo: true,
-  }));
+  })).concat(extra);
 }
+const STAFF_FIRST = ["Alicia", "Bernard", "Camille", "Darius", "Elena", "Frank", "Grace", "Hakeem", "Imani", "Jerome", "Kayla", "Lamar", "Monica", "Nathan", "Olivia", "Preston", "Quiana", "Rashad", "Simone", "Trevor"];
+const STAFF_LAST = ["Alexander", "Batiste", "Coleman", "Dupre", "Edwards", "Fontenot", "Guidry", "Hebert", "Landry"];
+const STAFF_LAST2 = ["Mitchell", "Narcisse", "Okafor", "Picou", "Reed", "Toussaint"];
 function demoSignups(employees, teams, ctx, today) {
   const out = []; let id = 1;
   const mod = (a, n) => ((a % n) + n) % n;
-  const cnt = (sl) => out.filter((s) => sameSlot(s, sl)).length;
-  const fits = (sl) => { const n = slotNeed(teams.find((t) => t.id === sl.teamId), sl.date, sl.block, sl.homeId, sl.clusterNo, ctx); return n > 0 && cnt(sl) < n; };
-  const clusterAt = (team, ds, b, i) => {
-    const cm = clusterMap(ctx.clusters, ctx.residents, ds.slice(0, 7)), nos = Object.keys(cm).map(Number);
-    if (!nos.length) return null;
-    const ok = nos.filter((c) => clusterBlock(team, ds, c) === b).sort((x, y) => mod(x + i, 7) - mod(y + i, 7));
-    return ok.length ? ok[0] : undefined;
+  const k5 = (sl) => `${sl.date}|${sl.block}|${sl.teamId}|${sl.homeId ?? ""}|${sl.clusterNo ?? ""}`;
+  const cnt = new Map(), busy = new Set(), needs = new Map();
+  const need = (sl) => { const k = k5(sl); if (!needs.has(k)) needs.set(k, slotNeed(teams.find((t) => t.id === sl.teamId), sl.date, sl.block, sl.homeId, sl.clusterNo, ctx)); return needs.get(k); };
+  const add = (sl) => {   // false if full, not a real slot, or the person is already working then
+    const b = `${sl.employeeId}|${sl.date}|${sl.block}`, k = k5(sl), n = need(sl);
+    if (busy.has(b) || n <= 0 || (cnt.get(k) || 0) >= n) return false;
+    busy.add(b); cnt.set(k, (cnt.get(k) || 0) + 1); out.push({ id: id++, ...sl }); return true;
   };
-  employees.forEach((e, idx) => {
+  const cms = {}, cmOf = (ds) => (cms[ds.slice(0, 7)] ||= clusterMap(ctx.clusters, ctx.residents, ds.slice(0, 7)));
+  const outing = teams.find((t) => t.staffing === "cluster");
+  // the outing cluster going out in this block with the most room
+  const clusterAt = (ds, b) => {
+    const cm = cmOf(ds), ok = Object.keys(cm).map(Number).filter((c) => clusterBlock(outing, ds, c) === b);
+    const room = (c) => need({ date: ds, block: b, teamId: outing.id, homeId: null, clusterNo: c }) - (cnt.get(k5({ date: ds, block: b, teamId: outing.id, homeId: null, clusterNo: c })) || 0);
+    ok.sort((x, y) => room(y) - room(x) || x - y);
+    return ok.length && room(ok[0]) > 0 ? ok[0] : null;
+  };
+  const named = employees.filter((e) => !/^demo-[ho]/.test(e.id));
+  named.forEach((e, idx) => {
     const i = idx + 1;
     for (let k = -14; k <= 20; k++) {
       const d = addDaysD(today, k), dow = d.getDay(), ds = isoDate(d);
@@ -165,21 +185,34 @@ function demoSignups(employees, teams, ctx, today) {
       if (mod(k + i, 7) === 5 || mod(k + i, 7) === 6) continue;
       const t = e.teams[mod(k + i, e.teams.length)], team = teams.find((x) => x.id === t);
       const b = team.key === "house" && i % 4 === 0 ? 0 : 2 + mod(k + i, 2);
-      if (out.some((s) => s.employeeId === e.id && s.date === ds && (s.block === b || s.block === b + 1))) continue;
       const homeId = team.staffing === "home" ? ctx.homes[(i * 3) % ctx.homes.length].id : null;
-      const c1 = team.staffing === "cluster" ? clusterAt(team, ds, b, i) : null, c2 = team.staffing === "cluster" ? clusterAt(team, ds, b + 1, i) : null;
-      if (c1 === undefined || c2 === undefined) continue;
-      const a = { employeeId: e.id, date: ds, block: b, teamId: t, homeId, clusterNo: c1 }, z = { employeeId: e.id, date: ds, block: b + 1, teamId: t, homeId, clusterNo: c2 };
-      if (!fits(a) || !fits(z)) continue;
-      out.push({ id: id++, ...a }, { id: id++, ...z });
+      for (const blk of [b, b + 1]) {
+        const clusterNo = team.staffing === "cluster" ? clusterAt(ds, blk) : null;
+        if (team.staffing === "cluster" && clusterNo == null) continue;
+        add({ employeeId: e.id, date: ds, block: blk, teamId: t, homeId, clusterNo });
+      }
     }
   });
+  for (let k = -14; k <= 20; k++) {
+    const ds = isoDate(addDaysD(today, k)), di = dayIndex(ds);
+    // house staff: each person has a house and an 8-hour shift, 2 days off a week, and the odd call-out
+    for (let g = 0; g < 180; g++) {
+      const h = Math.floor(g / 9), p = Math.floor(g / 3) % 3, j = g % 3;
+      if (mod(di, 7) === j * 2 || mod(di, 7) === j * 2 + 1) continue;
+      if ((g * 31 + di * 17) % 23 === 0) continue;
+      for (const blk of [p * 2, p * 2 + 1]) add({ employeeId: "demo-h" + g, date: ds, block: blk, teamId: 1, homeId: ctx.homes[h].id, clusterNo: null });
+    }
+    if (outing) for (let g = 0; g < 24; g++) {
+      if (mod(di + g, 7) >= 5 || (g * 29 + di * 13) % 19 === 0) continue;
+      for (const blk of [2 + (g % 2), 3 + (g % 2)]) { const c = clusterAt(ds, blk); if (c != null) add({ employeeId: "demo-o" + g, date: ds, block: blk, teamId: outing.id, homeId: null, clusterNo: c }); }
+    }
+  }
   return out;
 }
 
 /* ---------------- Preview: demo data in localStorage ---------------- */
 function previewBackend(cfg) {
-  const KEY = "magnolia-dsp-preview-v4";
+  const KEY = "magnolia-dsp-preview-v5";
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const read = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch (_) { return null; } };
   const write = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (_) {} };
@@ -189,7 +222,7 @@ function previewBackend(cfg) {
   };
   const seed = () => {
     const teams = demoTeams(), homes = demoHomes(), employees = demoEmployees(today), residents = demoResidents(homes);
-    const s0 = { teams, homes, employees, residents, clusters: [], shuffles: {}, waitlist: [], signups: [], settings: { announcement: "", lockedWeeks: [], vapidPublic: "" }, nextId: 100000, admins: {}, reminders: true };
+    const s0 = { teams, homes, employees, residents, clusters: [], shuffles: {}, waitlist: [], temps: [], signups: [], settings: { announcement: "", lockedWeeks: [], vapidPublic: "" }, nextId: 100000, admins: {}, reminders: true };
     st = s0;
     for (const m of monthsBetween(isoDate(addDaysD(today, -20)), isoDate(addDaysD(today, 40)))) ensure(m);
     s0.signups = demoSignups(employees, teams, { homes, residents, clusters: s0.clusters }, today);
@@ -202,12 +235,14 @@ function previewBackend(cfg) {
   const meEmp = () => st.employees.find((e) => e.userId === "preview-me");
   const teamOf = (id) => st.teams.find((t) => t.id === id);
   const needOf = (sl) => slotNeed(teamOf(sl.teamId), sl.date, sl.block, sl.homeId ?? null, sl.clusterNo ?? null, ctx());
+  const tempsIn = (sl) => (st.temps || []).filter((x) => sameSlot(x, sl)).reduce((a, x) => a + x.count, 0);
+  const takenIn = (sl) => st.signups.filter((s) => sameSlot(s, sl)).length + tempsIn(sl);
   const checkTake = (sl) => {
     const t = teamOf(sl.teamId), n = needOf(sl);
     if (n === 0) throw friendlyError("That team doesn't work this block.");
     if (n < 0) throw friendlyError(t.staffing === "home" ? "Pick which house you're working." : t.staffing === "cluster" ? "Pick which outing cluster you're working." : "That slot doesn't exist.");
     if (st.signups.some((s) => s.employeeId === sl.employeeId && s.date === sl.date && s.block === sl.block)) throw friendlyError("You already have a shift at that time.");
-    if (st.signups.filter((s) => sameSlot(s, sl)).length >= n) throw friendlyError("That shift is already full. Join the waitlist instead.");
+    if (takenIn(sl) >= n) throw friendlyError("That shift is already full. Join the waitlist instead.");
   };
   const fillFrom = (gone) => {
     if (shiftStart(gone.date, gone.block) <= new Date()) return;
@@ -229,7 +264,7 @@ function previewBackend(cfg) {
       if (changed) write();
       return { teams: st.teams, homes: st.homes, employees: st.employees, settings: st.settings, residents: st.residents,
         clusters: st.clusters.filter((c) => c.month >= from.slice(0, 7) && c.month <= to.slice(0, 7)),
-        waitlist: st.waitlist, signups: st.signups.filter((s) => s.date >= from && s.date <= to) };
+        waitlist: st.waitlist, temps: (st.temps ||= []).filter((x) => x.date >= from && x.date <= to), signups: st.signups.filter((s) => s.date >= from && s.date <= to) };
     },
     async take(slot, employeeId) {
       const sl = { homeId: null, clusterNo: null, ...slot, employeeId: employeeId || meEmp().id };
@@ -248,13 +283,24 @@ function previewBackend(cfg) {
     async joinWait(slot) {
       const sl = { homeId: null, clusterNo: null, ...slot, employeeId: meEmp().id }, n = needOf(sl);
       if (n <= 0) throw friendlyError("That slot doesn't exist.");
-      if (st.signups.filter((s) => sameSlot(s, sl)).length < n) throw friendlyError("There's an open spot. Take the shift instead.");
+      if (takenIn(sl) < n) throw friendlyError("There's an open spot. Take the shift instead.");
       if (st.signups.some((s) => s.employeeId === sl.employeeId && s.date === sl.date && s.block === sl.block)) throw friendlyError("You already work at that time.");
       if (st.waitlist.some((w) => w.employeeId === sl.employeeId && sameSlot(w, sl))) throw friendlyError("You're already on that waitlist.");
       if (st.waitlist.filter((w) => sameSlot(w, sl)).length >= WAITLIST_MAX) throw friendlyError("That waitlist is full (10 people).");
       st.waitlist.push({ id: st.nextId++, ...sl, createdAt: new Date().toISOString() }); done();
     },
     async leaveWait(id) { st.waitlist = st.waitlist.filter((w) => w.id !== id); done(); },
+    async setTemps(slot, count) {
+      const sl = { homeId: null, clusterNo: null, ...slot }, n = needOf(sl);
+      st.temps = (st.temps || []).filter((x) => !sameSlot(x, sl));
+      if (count > 0) {
+        const dsps = st.signups.filter((s) => sameSlot(s, sl)).length;
+        if (n <= 0) throw friendlyError("That slot doesn't exist.");
+        if (dsps + count > n) throw friendlyError(`Only ${Math.max(n - dsps, 0)} spot(s) open there.`);
+        st.temps.push({ date: sl.date, block: sl.block, teamId: sl.teamId, homeId: sl.homeId, clusterNo: sl.clusterNo, count });
+      }
+      done();
+    },
     async updateMe(patch) { Object.assign(meEmp(), patch); done(); },
     async setReminders(on) { st.reminders = on; done(); },
     async hrSaveEmployee(emp) {
@@ -337,7 +383,7 @@ async function supabaseBackend(cfg) {
   function subscribe() {
     if (channel) sb.removeChannel(channel);
     channel = sb.channel("dsp");
-    for (const table of ["dsp_signups", "dsp_waitlist", "employees", "teams", "settings", "residents", "resident_clusters"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, ping);
+    for (const table of ["dsp_signups", "dsp_waitlist", "temp_cover", "employees", "teams", "settings", "residents", "resident_clusters"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, ping);
     channel.subscribe();
   }
   const rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); if (error) throw fail(error); return data; };
@@ -354,20 +400,30 @@ async function supabaseBackend(cfg) {
     },
     me() { return me; },
     async load(from, to) {
-      if (!me) return { teams: [], homes: [], employees: [], signups: [], residents: [], clusters: [], waitlist: [], settings: { announcement: "", lockedWeeks: [], vapidPublic: "" } };
+      if (!me) return { teams: [], homes: [], employees: [], signups: [], residents: [], clusters: [], waitlist: [], temps: [], settings: { announcement: "", lockedWeeks: [], vapidPublic: "" } };
       const m0 = from.slice(0, 7), m1 = to.slice(0, 7);
       const getClusters = () => sb.from("resident_clusters").select("month,resident_id,cluster_no").gte("month", m0).lte("month", m1);
-      const [t, h, e, s, set, r, c, w] = await Promise.all([
+      // Supabase returns at most 1,000 rows per request, so big tables are read a page at a time
+      const all = async (make) => {
+        const first = await make().range(0, 999);
+        if (first.error || first.data.length < 1000) return first;
+        const total = first.count || 0, pages = [];
+        for (let from = 1000; from < Math.max(total, 1001); from += 1000) pages.push(make().range(from, from + 999));
+        const rest = await Promise.all(pages), bad = rest.find((x) => x.error);
+        return bad || { data: first.data.concat(...rest.map((x) => x.data)) };
+      };
+      const [t, h, e, s, set, r, c, w, tc] = await Promise.all([
         sb.from("teams").select("*").order("sort"),
         sb.from("homes").select("*").order("sort"),
         sb.from("employees").select("*").order("name"),
-        sb.from("dsp_signups").select("id,employee_id,shift_date,block,team_id,home_id,cluster_no").gte("shift_date", from).lte("shift_date", to),
+        all(() => sb.from("dsp_signups").select("id,employee_id,shift_date,block,team_id,home_id,cluster_no", { count: "exact" }).gte("shift_date", from).lte("shift_date", to).order("id")),
         sb.from("settings").select("announcement,locked_weeks,vapid_public").eq("id", 1).maybeSingle(),
         sb.from("residents").select("*").order("id"),
         getClusters(),
         sb.from("dsp_waitlist").select("*").gte("shift_date", from).lte("shift_date", to).order("created_at"),
+        sb.from("temp_cover").select("shift_date,block,team_id,home_id,cluster_no,count").gte("shift_date", from).lte("shift_date", to),
       ]);
-      const err = t.error || h.error || e.error || s.error || r.error || c.error || w.error;
+      const err = t.error || h.error || e.error || s.error || r.error || c.error || w.error || tc.error;
       if (err) throw fail(err);
       let clusters = c.data;
       // new month and nobody has opened it yet: deal this month's clusters now
@@ -381,6 +437,7 @@ async function supabaseBackend(cfg) {
         residents: r.data.map((x) => ({ id: x.id, firstName: x.first_name, homeId: x.home_id, ownDsp: x.own_dsp, active: x.active, demo: x.demo })),
         clusters: clusters.map((x) => ({ month: x.month, residentId: x.resident_id, clusterNo: x.cluster_no })),
         waitlist: w.data.map((x) => ({ ...toSlot(x), createdAt: x.created_at })),
+        temps: tc.data.map((x) => ({ date: x.shift_date, block: x.block, teamId: x.team_id, homeId: x.home_id ?? null, clusterNo: x.cluster_no ?? null, count: x.count })),
         settings: { announcement: (set.data && set.data.announcement) || "", lockedWeeks: (set.data && set.data.locked_weeks) || [], vapidPublic: (set.data && set.data.vapid_public) || "" },
       };
     },
@@ -396,6 +453,7 @@ async function supabaseBackend(cfg) {
     },
     async joinWait(slot) { await run(sb.from("dsp_waitlist").insert({ employee_id: await this.myEmployeeId(), ...slotRow(slot) })); },
     async leaveWait(id) { await run(sb.from("dsp_waitlist").delete().eq("id", id)); },
+    async setTemps(slot, count) { await rpc("hr_set_temps", { p_date: slot.date, p_block: slot.block, p_team: slot.teamId, p_home: slot.homeId ?? null, p_cluster: slot.clusterNo ?? null, p_count: count }); ping(); },
     async updateMe(patch) {
       const row = {};
       if ("name" in patch) row.name = patch.name;

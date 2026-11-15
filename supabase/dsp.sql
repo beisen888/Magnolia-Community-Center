@@ -762,3 +762,58 @@ do $$ begin
     grant execute on function public.dsp_open_slots(int), public.hr_digest_claim(date), public.hr_contacts() to service_role;
   end if;
 end $$;
+
+-- =====================================================================================
+-- v2.4: HR can mark open spots as covered by a temp (agency) DSP. Safe to re-run.
+-- A booked temp fills a spot: it stops counting as open, and gives a record of temp hours used.
+-- =====================================================================================
+create table if not exists public.temp_cover (
+  id         bigint generated always as identity primary key,
+  shift_date date not null,
+  block      smallint not null check (block between 0 and 5),
+  team_id    int not null references public.teams(id) on delete cascade,
+  home_id    int references public.homes(id) on delete cascade,
+  cluster_no smallint,
+  count      smallint not null check (count between 1 and 30),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists temp_cover_slot on public.temp_cover (shift_date, block, team_id, coalesce(home_id, 0), coalesce(cluster_no, 0));
+alter table public.temp_cover enable row level security;
+grant select on public.temp_cover to authenticated;
+drop policy if exists "read temps" on public.temp_cover;
+create policy "read temps" on public.temp_cover for select to authenticated using (true);
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then grant all on public.temp_cover to service_role; end if;
+end $$;
+
+-- spots taken in a slot = DSP sign-ups + temps HR has booked
+create or replace function public.slot_count(p_date date, p_block int, p_team int, p_home int, p_cluster int, p_skip bigint default null)
+returns int language sql stable security definer set search_path = public as $$
+  select (select count(*)::int from public.dsp_signups
+          where shift_date = p_date and block = p_block and team_id = p_team
+            and home_id is not distinct from p_home and cluster_no is not distinct from p_cluster and id is distinct from p_skip)
+       + coalesce((select sum(count)::int from public.temp_cover
+          where shift_date = p_date and block = p_block and team_id = p_team
+            and home_id is not distinct from p_home and cluster_no is not distinct from p_cluster), 0)
+$$;
+
+-- HR sets how many temps are booked for one slot (0 removes them)
+create or replace function public.hr_set_temps(p_date date, p_block int, p_team int, p_home int, p_cluster int, p_count int)
+returns void language plpgsql security definer set search_path = public as $$
+declare need int; dsps int;
+begin
+  if not public.is_admin() then raise exception 'HR only' using errcode = '42501'; end if;
+  perform public.slot_lock(p_date, p_block, p_team, p_home, p_cluster);
+  delete from public.temp_cover where shift_date = p_date and block = p_block and team_id = p_team
+    and home_id is not distinct from p_home and cluster_no is not distinct from p_cluster;
+  if coalesce(p_count, 0) <= 0 then return; end if;
+  need := public.slot_need(p_team, p_date, p_block, p_home, p_cluster);
+  if need <= 0 then raise exception 'That slot doesn''t exist' using errcode = 'P0001'; end if;
+  dsps := public.slot_count(p_date, p_block, p_team, p_home, p_cluster);
+  if dsps + p_count > need then raise exception 'Only % spot(s) open there', greatest(need - dsps, 0) using errcode = 'P0001'; end if;
+  insert into public.temp_cover (shift_date, block, team_id, home_id, cluster_no, count) values (p_date, p_block, p_team, p_home, p_cluster, p_count);
+end $$;
+revoke execute on function public.hr_set_temps(date, int, int, int, int, int) from public, anon;
+grant execute on function public.hr_set_temps(date, int, int, int, int, int) to authenticated;
+
+do $$ begin alter publication supabase_realtime add table public.temp_cover; exception when duplicate_object then null; end $$;

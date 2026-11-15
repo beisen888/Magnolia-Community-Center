@@ -78,3 +78,50 @@ begin
     end loop;
   end loop;
 end $$;
+
+-- A realistic staff: 180 House & Daily Living DSPs (3 per house per 8-hour shift, so 2 are on each day) and 24 Outings DSPs,
+-- each with 2 days off a week and the odd call-out. What's left open is what HR sees under "Temps needed".
+do $$
+declare g int; eid uuid; h int; p int; j int; hm int; d date; di int; blk int; cl int; ht int; ot int;
+  fn text[] := array['Alicia','Bernard','Camille','Darius','Elena','Frank','Grace','Hakeem','Imani','Jerome','Kayla','Lamar','Monica','Nathan','Olivia','Preston','Quiana','Rashad','Simone','Trevor'];
+  ln text[] := array['Alexander','Batiste','Coleman','Dupre','Edwards','Fontenot','Guidry','Hebert','Landry'];
+  ln2 text[] := array['Mitchell','Narcisse','Okafor','Picou','Reed','Toussaint'];
+begin
+  select id into ht from public.teams where key = 'house';
+  select id into ot from public.teams where key = 'outings';
+  for g in 0..179 loop
+    h := g / 9; p := (g / 3) % 3; j := g % 3;
+    hm := (select id from public.homes order by sort, id offset h limit 1);
+    continue when hm is null or ht is null;
+    insert into public.employees (name, level, hire_date, weekly_target, has_license, has_cna, teams, demo)
+    values (fn[1 + g % 20] || ' ' || ln[1 + g / 20], case when g % 9 = 3 then 'Lead DSP' when g % 3 = 1 then 'DSP II' else 'DSP I' end,
+            current_date - (30 + (g * 37) % 1500), 40, g % 4 = 0, g % 7 = 0, array[ht], true) returning id into eid;
+    for k in -14..20 loop
+      d := current_date + k; di := d - date '2000-01-03';
+      continue when di % 7 in (j * 2, j * 2 + 1);
+      continue when (g * 31 + di * 17) % 23 = 0;
+      for blk in p * 2 .. p * 2 + 1 loop
+        begin insert into public.dsp_signups (employee_id, shift_date, block, team_id, home_id) values (eid, d, blk, ht, hm);
+        exception when others then null; end;
+      end loop;
+    end loop;
+  end loop;
+  for g in 0..23 loop
+    continue when ot is null;
+    insert into public.employees (name, level, hire_date, weekly_target, has_license, has_cna, teams, demo)
+    values (fn[1 + (g * 3 + 5) % 20] || ' ' || ln2[1 + g % 6], case when g % 8 = 0 then 'Lead DSP' when g % 2 = 1 then 'DSP II' else 'DSP I' end,
+            current_date - (60 + (g * 53) % 1200), 40, true, g % 5 = 0, array[ot], true) returning id into eid;
+    for k in -14..20 loop
+      d := current_date + k; di := d - date '2000-01-03';
+      continue when (di + g) % 7 >= 5 or (g * 29 + di * 13) % 19 = 0;
+      for blk in 2 + g % 2 .. 3 + g % 2 loop
+        select c.cluster_no into cl from (select distinct cluster_no from public.resident_clusters where month = to_char(d, 'YYYY-MM')) c
+          where public.cluster_block(ot, d, c.cluster_no) = blk
+          order by public.slot_need(ot, d, blk, null, c.cluster_no) - public.slot_count(d, blk, ot, null, c.cluster_no) desc, c.cluster_no limit 1;
+        continue when cl is null;
+        begin insert into public.dsp_signups (employee_id, shift_date, block, team_id, cluster_no) values (eid, d, blk, ot, cl);
+        exception when others then null; end;
+      end loop;
+    end loop;
+  end loop;
+end $$;

@@ -63,6 +63,8 @@ Vercel → Project → **Settings → Domains** → add e.g. `shifts.yourorg.org
   3. Each DSP taps **Turn on phone alerts** under My week → My profile. iPhone users first add the site to their home screen (Share → Add to Home Screen).
 - **Unfilled shifts → HR (v2.3):** HR → Temps needed shows every open spot for the next 7 days by block, house and cluster, with a CSV to send the staffing agency. Spots inside 48 hours are marked firm (DSPs can't drop any more). Every morning at 7 AM (`HR_DIGEST_HOUR`) `/api/notify` emails and pushes the 48-hour list to everyone with HR access. Test it: `/api/notify?digest=1` with the `CRON_SECRET`.
 - **Clusters:** 120 day residents (6 per home) make 15 outing clusters of 8.
+- **Temp booked (v2.4):** on HR → Temps needed, tap a house or cluster to mark a temp booked (or "Book all"). Booked temps fill the spot, show on the Schedule as "Temp", and export as a CSV of temp hours.
+- **Demo data:** 220 demo DSPs (180 house staff, 24 outings staff, 16 named) so coverage looks like a real week with a realistic number of gaps.
 
 ## Handing it to a client
 See **HANDOFF.md**: transfer this board, or let them build their own from a template.
