@@ -35,7 +35,7 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /* ---------- state ---------- */
 const S = {
-  tab: "home", y: NOW.getFullYear(), m: NOW.getMonth(), sel: TODAY, weekRef: TODAY, hrWeekRef: TODAY, hrSub: "coverage", resMonth: monthKey(TODAY),
+  tab: "home", y: NOW.getFullYear(), m: NOW.getMonth(), sel: TODAY, weekRef: TODAY, hrWeekRef: TODAY, hrSub: "coverage", tempDay: "", tempFrom: TODAY, resMonth: monthKey(TODAY),
   myTeamsOnly: true, hrTools: false, quiz: { i: 0, answers: [] }, editEmp: null, editTeam: null, peopleQ: "", open: "", pick: "",
   me: null, mode: "connecting", loaded: false, notice: "", noAdmin: undefined, admins: null, push: { supported: false, here: false, ios: false }, newPriv: "",
   teams: [], homes: [], employees: [], signups: [], residents: [], clusters: [], waitlist: [], settings: { announcement: "", lockedWeeks: [], vapidPublic: "" },
@@ -89,6 +89,18 @@ function totals(team, date, block) {
   // sign-ups that no longer match a slot (e.g. a house removed) still show as people
   return { need, have };
 }
+/* spots nobody has taken yet, for shifts that haven't started (what HR may need temps for) */
+function openSpots(from, to) {
+  const out = [], now = Date.now();
+  for (let d = from; d <= to; d = addDays(d, 1)) for (let b = 0; b < 6; b++) {
+    if (shiftStart(d, b).getTime() <= now) continue;
+    for (const t of activeTeams()) for (const u of units(t, d, b)) { const n = u.need - inSlot(u).length; if (n > 0) out.push({ ...u, team: t, open: n }); }
+  }
+  return out;
+}
+const sumOpen = (xs) => xs.reduce((a, x) => a + x.open, 0);
+/* inside 48 hours DSPs can't drop any more, so whatever is open there needs a temp or an HR assignment */
+const openSoon = () => openSpots(TODAY, addDays(TODAY, 2)).filter((x) => shiftStart(x.date, x.block) - Date.now() <= DROP_HOURS * 36e5);
 const extraMin = (s) => { const t = teamById(s.teamId), g = t && t.staffing === "cluster" && groupOf(s.date, s.clusterNo); return g && g.ones ? 30 : 0; };
 const shiftHours = (s) => 4 + extraMin(s) / 60;
 const placeOf = (s) => { const h = s.homeId != null && homeById(s.homeId); return h ? h.name : s.clusterNo != null ? `Cluster ${s.clusterNo}` : ""; };
@@ -142,8 +154,8 @@ async function refresh() {
   S.me = B.me();
   const ms = `${S.y}-${pad(S.m + 1)}-01`;
   const me = iso(new Date(S.y, S.m + 1, 0));
-  const starts = [ms, weekStart(S.weekRef), weekStart(S.hrWeekRef), weekStart(TODAY), S.resMonth + "-01"].sort();
-  const ends = [me, addDays(weekStart(S.weekRef), 6), addDays(weekStart(S.hrWeekRef), 6), addDays(TODAY, 35), iso(new Date(+S.resMonth.slice(0, 4), +S.resMonth.slice(5), 0))].sort();
+  const starts = [ms, weekStart(S.weekRef), weekStart(S.hrWeekRef), weekStart(TODAY), S.tempFrom, S.resMonth + "-01"].sort();
+  const ends = [me, addDays(weekStart(S.weekRef), 6), addDays(weekStart(S.hrWeekRef), 6), addDays(TODAY, 35), addDays(S.tempFrom, 6), iso(new Date(+S.resMonth.slice(0, 4), +S.resMonth.slice(5), 0))].sort();
   try {
     const d = await B.load(starts[0], ends[ends.length - 1]);
     if (seq !== loadSeq) return;
@@ -246,7 +258,7 @@ function render() {
   const views = { home: viewHome, schedule: viewSchedule, teams: viewTeams, quiz: viewQuiz, hr: viewHR };
   if (S.tab === "hr" && !isAdmin()) S.tab = "home";
   v.innerHTML = (views[S.tab] || viewHome)();
-  const key = [S.tab, S.weekRef, S.hrSub, S.hrWeekRef, S.y, S.m, S.quiz.i, S.resMonth].join("|");
+  const key = [S.tab, S.weekRef, S.hrSub, S.hrWeekRef, S.tempFrom, S.y, S.m, S.quiz.i, S.resMonth].join("|");
   if (key !== lastViewKey) { lastViewKey = key; v.classList.remove("enter"); void v.offsetWidth; v.classList.add("enter"); }
   startCountdowns();
   $("footer").innerHTML = B.mode === "preview"
@@ -267,6 +279,7 @@ function renderTabs() {
   $("tabs").innerHTML = TABS.filter((t) => !t.admin || isAdmin()).map((t) => {
     let count = "";
     if (t.id === "quiz" && emp && !emp.teams.length) count = `<span class="count">start here</span>`;
+    if (t.id === "hr" && S.loaded) { const n = sumOpen(openSoon()); if (n) count = `<span class="count">${n} open</span>`; }
     return `<button role="tab" aria-selected="${S.tab === t.id}" data-act="tab" data-tab="${t.id}">${t.label}${count}</button>`;
   }).join("");
 }
@@ -274,6 +287,10 @@ function renderNotice() {
   let h = S.settings.announcement ? `<div class="announce" role="note"><span class="eyebrow">Announcement</span><p>${esc(S.settings.announcement)}</p></div>` : "";
   if (S.notice) h += `<p class="notice" role="status">${esc(S.notice)}</p>`;
   if (S.noAdmin && S.me && !S.me.isAdmin) h += `<p class="notice info">This schedule has no HR admin yet. If you run it, <button class="btn sm" data-act="claim">Claim admin</button></p>`;
+  if (isAdmin() && S.loaded && !(S.tab === "hr" && S.hrSub === "temps")) {
+    const n = sumOpen(openSoon());
+    if (n) h += `<p class="notice info hrnote"><span><b>HR: ${plural(n, "spot")} still open in the next 48 hours.</b> DSPs can't drop these any more, so they need a temp or an assignment.</span> <button class="btn sm" data-act="gotemps">See temps needed</button></p>`;
+  }
   $("notice").innerHTML = h;
 }
 function signedOut() {
@@ -606,8 +623,8 @@ function viewQuiz() {
 
 /* ---------- HR ---------- */
 function viewHR() {
-  const subs = [["coverage", "Coverage"], ["people", "Employees"], ["residents", "Residents & clusters"], ["teams", "Teams & staffing"], ["homes", "Homes"], ["settings", "Settings"]];
-  const body = { coverage: hrCoverage, people: hrPeople, residents: hrResidents, teams: hrTeams, homes: hrHomes, settings: hrSettings }[S.hrSub]();
+  const subs = [["coverage", "Coverage"], ["temps", "Temps needed"], ["people", "Employees"], ["residents", "Residents & clusters"], ["teams", "Teams & staffing"], ["homes", "Homes"], ["settings", "Settings"]];
+  const body = { coverage: hrCoverage, temps: hrTemps, people: hrPeople, residents: hrResidents, teams: hrTeams, homes: hrHomes, settings: hrSettings }[S.hrSub]();
   return `<div class="subtabs">${subs.map(([id, l]) => `<button data-act="hrsub" data-sub="${id}" aria-pressed="${S.hrSub === id}">${l}</button>`).join("")}</div>${body}`;
 }
 function hrWeekNav() {
@@ -640,6 +657,41 @@ function hrCoverage() {
   h += `</tbody></table><div class="progress-key" style="margin-top:8px">${teams.map((t) => `<span class="${teamClass(t)}"><i></i>${esc(t.shortName)}${t.staffing === "home" ? " (all houses)" : t.staffing === "cluster" ? " (all clusters)" : ""}</span>`).join("")}<span style="color:var(--warn)">orange = short-staffed</span></div></div>
     <div class="rowact"><button class="btn ghost" data-act="csv">Download this week (CSV)</button><button class="btn quiet" data-act="print">Print</button></div>`;
   return h;
+}
+function hrTemps() {
+  const ws = S.tempFrom, days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(ws, i));   // rolling 7 days, starting today by default
+  const nav = `<div class="weeknav"><button data-act="tempnav" data-d="-7" aria-label="Previous 7 days">‹</button><b style="min-width:9em;text-align:center">${fmt(ws, { month: "short", day: "numeric" })} – ${fmt(addDays(ws, 6), { month: "short", day: "numeric" })}</b><button data-act="tempnav" data-d="7" aria-label="Next 7 days">›</button><button class="linkbtn" data-act="tempnav" data-d="0">From today</button></div>`;
+  const all = openSpots(ws, addDays(ws, 6)), soon = openSoon(), nSoon = sumOpen(soon), nAll = sumOpen(all);
+  const by = {}; for (const x of all) by[`${x.date}|${x.block}`] = (by[`${x.date}|${x.block}`] || 0) + x.open;
+  const dayTot = (d) => sumOpen(all.filter((x) => x.date === d));
+  const sel = days.includes(S.tempDay) ? S.tempDay : days.find((d) => dayTot(d)) || days[0];
+  const max = Math.max(1, ...Object.values(by));
+  let h = `<div class="sec-title"><h2>Temps needed</h2>${nav}</div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13.5px">Every spot a DSP hasn't taken. Inside 48 hours DSPs can't drop, so those numbers are firm: request that many temp DSPs, or assign someone from the Schedule tab (HR tools). HR also gets this as an email and phone alert every morning.</p>
+    <div class="cards">
+    <div class="card kpi${nSoon ? " warn" : ""}"><div class="v">${nSoon}</div><div class="k">temp shifts needed in the next 48 hours (${nSoon * 4} hrs)</div></div>
+    <div class="card kpi"><div class="v">${nAll}</div><div class="k">open spots in these 7 days (${nAll * 4} hrs) · later days may still fill</div></div>
+    <div class="card kpi"><div class="v">${new Set(soon.filter((x) => x.homeId != null).map((x) => x.homeId)).size}</div><div class="k">houses short in the next 48 hours</div></div>
+    <div class="card kpi"><div class="v">${S.waitlist.filter((w) => w.date >= TODAY).length}</div><div class="k">DSPs on waitlists (could cover other houses)</div></div></div>`;
+  h += `<div class="card tw"><table class="covgrid temps"><thead><tr><th>Block</th>${days.map((d) => `<th><button class="daybtn" data-act="tempday" data-date="${d}" aria-pressed="${d === sel}">${fmt(d, { weekday: "short", month: "numeric", day: "numeric" })}</button></th>`).join("")}</tr></thead><tbody>`;
+  for (let b = 0; b < 6; b++) h += `<tr><th>${BLOCKS[b].label}</th>${days.map((d) => { const n = by[`${d}|${b}`] || 0, gone = shiftStart(d, b).getTime() <= Date.now();
+    return `<td class="${d === sel ? "selcol" : ""}">${gone ? `<span class="muted">–</span>` : n ? `<button class="tneed" data-act="tempday" data-date="${d}" style="--heat:${Math.round((n / max) * 100)}%" title="${n} open">${n}</button>` : `<span class="ok">✓</span>`}</td>`; }).join("")}</tr>`;
+  h += `<tr class="tot"><th>Day total</th>${days.map((d) => `<td class="${d === sel ? "selcol" : ""}"><b>${dayTot(d) || (d < TODAY ? "–" : 0)}</b></td>`).join("")}</tr></tbody></table>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">Number = DSPs still needed in that block across all houses, clusters and teams. Tap a day for the breakdown.</p></div>`;
+  const list = all.filter((x) => x.date === sel);
+  h += `<section style="margin-top:18px"><div class="sec-title"><h2>${long(sel)}</h2><span class="muted" style="font-size:13.5px">${plural(sumOpen(list), "temp shift")} needed</span></div>`;
+  if (!list.length) h += `<div class="card empty" style="padding:18px">${sel < TODAY ? "This day has passed." : "Fully staffed. No temps needed."}</div>`;
+  else {
+    h += `<div class="tw"><table class="data"><thead><tr><th>Block</th><th>Team</th><th>Needed</th><th>Where (× how many)</th></tr></thead><tbody>`;
+    for (let b = 0; b < 6; b++) for (const t of activeTeams()) {
+      const xs = list.filter((x) => x.block === b && x.teamId === t.id); if (!xs.length) continue;
+      const firm = shiftStart(sel, b) - Date.now() <= DROP_HOURS * 36e5;
+      h += `<tr><td style="white-space:nowrap">${BLOCKS[b].label}${firm ? ` <span class="badge warn">firm</span>` : ""}</td><td><span class="chip ${teamClass(t)}"><span class="dot tbg"></span>${esc(t.shortName)}</span></td><td><b>${sumOpen(xs)}</b></td>
+        <td>${xs[0].label ? `<div class="places">${xs.map((x) => `<span>${esc(x.label)} <b>×${x.open}</b></span>`).join("")}</div>` : `<span class="muted">Whole team</span>`}</td></tr>`;
+    }
+    h += `</tbody></table></div>`;
+  }
+  return h + `<div class="rowact"><button class="btn" data-act="tempcsv">Download temp request (CSV)</button><button class="btn ghost" data-act="tempday2" data-date="${sel}">Open this day in Schedule</button><button class="btn quiet" data-act="print">Print</button></div></section>`;
 }
 function hrPeople() {
   const ws = weekStart(S.hrWeekRef), q = S.peopleQ.toLowerCase();
@@ -727,6 +779,7 @@ function hrSettings() {
         <ol class="steps"><li>Vercel → your project → <b>Settings → Environment Variables</b> → add <b>VAPID_PRIVATE_KEY</b> and paste it.</li><li><b>Deployments → ⋯ → Redeploy</b>.</li><li>In Supabase → SQL editor, run <b>supabase/alerts-cron.sql</b> once (the 10-minute timer).</li></ol>
         <button class="linkbtn" data-act="privdone">I've saved it</button></div>`
         : `<button class="btn ${key ? "quiet" : ""}" data-act="vapid">${key ? "Replace alert keys" : "Create alert keys"}</button>${key ? `<p class="muted note">Replacing keys means everyone has to turn alerts on again.</p>` : ""}`}</section>
+    <section class="card"><span class="eyebrow">Unfilled shift alerts</span><p style="margin:6px 0 0;font-size:15px">Every morning at 7 AM, everyone with HR access gets an email (and a phone alert, if they turned alerts on) listing the spots still open in the next 48 hours, by house and cluster. The live numbers are always under <button class="linkbtn" data-act="hrsub" data-sub="temps">Temps needed</button>.</p></section>
     <section class="card"><span class="eyebrow">Publishing</span><p style="margin:6px 0 0;font-size:15px">Publish each week from <button class="linkbtn" data-act="hrsub" data-sub="coverage">Coverage</button>. DSPs can pick shifts up to ${CFG.signupWeeksAhead} weeks ahead and drop until 48 hours before a shift. Publishing locks new picks and emails every DSP their final schedule.</p></section>
     <section class="card"><span class="eyebrow">Demo data</span><p style="margin:6px 0 12px;font-size:14px">${demo} demo DSPs (Sally Thompson and team), ${S.residents.filter((r) => r.demo).length} demo residents and their shifts are loaded for presentations.</p>
       ${demo || S.residents.some((r) => r.demo) ? `<button class="btn danger" data-act="wipedemo">Remove demo data</button>` : ""}${B.mode === "preview" ? ` <button class="btn quiet" data-act="resetdemo">Reset preview</button>` : ""}</section></div>`;
@@ -833,6 +886,18 @@ const actions = {
   unpublish: (d) => { if (confirm("Reopen this week? DSPs will be able to pick shifts again.")) act(() => B.setWeekLock(d.w, false), "Week reopened."); },
   wipedemo: () => { if (confirm("Remove all demo DSPs, demo residents and their shifts? Real people and their shifts stay.")) act(() => B.wipeDemo(), (n) => `Removed ${n} demo DSPs and the demo residents.`); },
   resetdemo: () => { if (confirm("Reset all preview data on this device?")) { B.resetDemo(); } },
+  tempnav: (d) => { S.tempFrom = +d.d ? addDays(S.tempFrom, +d.d) : TODAY; S.tempDay = ""; refresh(); },
+  gotemps: () => { S.tab = "hr"; S.hrSub = "temps"; S.tempFrom = TODAY; S.tempDay = ""; syncHash(); refresh(); window.scrollTo(0, 0); },
+  tempday: (d) => { S.tempDay = d.date; render(); },
+  tempday2: (d) => { S.hrTools = true; goDay(d.date); },
+  tempcsv: () => {
+    const ws = S.tempFrom, q = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    const rows = [["Date", "Day", "Block", "Team", "House / cluster", "DSPs signed up", "DSPs needed", "Temps needed", "Hours", "Inside 48 hours"].map(q).join(",")];
+    for (const x of openSpots(ws, addDays(ws, 6))) rows.push([x.date, fmt(x.date, { weekday: "long" }), BLOCKS[x.block].label, x.team.name, x.label, x.need - x.open, x.need, x.open, x.open * 4,
+      shiftStart(x.date, x.block) - Date.now() <= DROP_HOURS * 36e5 ? "yes" : "no"].map(q).join(","));
+    if (rows.length === 1) return toast("Nothing open in these 7 days.");
+    downloadFile(`magnolia-temps-needed-${ws}.csv`, rows.join("\n"), "text/csv");
+  },
   print: () => window.print(),
   csv: () => {
     const ws = weekStart(S.hrWeekRef), we = addDays(ws, 6), q = (v) => `"${String(v).replace(/"/g, '""')}"`;
@@ -896,7 +961,8 @@ document.addEventListener("submit", (ev) => {
 /* ---------- boot ---------- */
 const h0 = location.hash.slice(1);
 if (TABS.some((t) => t.id === h0)) S.tab = h0;
-window.addEventListener("hashchange", () => { const t = location.hash.slice(1); if (TABS.some((x) => x.id === t) && t !== S.tab) { S.tab = t; render(); } });
+if (h0 === "temps") { S.tab = "hr"; S.hrSub = "temps"; }   // link used in the HR alert
+window.addEventListener("hashchange", () => { const t = location.hash.slice(1); if (t === "temps") { S.tab = "hr"; S.hrSub = "temps"; syncHash(); return render(); } if (TABS.some((x) => x.id === t) && t !== S.tab) { S.tab = t; render(); } });
 render();
 (async () => {
   B = await createBackend();

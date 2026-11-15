@@ -396,3 +396,18 @@ table.data th{background:var(--cream);color:var(--accent)}
 .orow .unitsel{display:block;margin-top:4px;font-size:13px;padding:4px 8px;max-width:100%}
 .d7 .bar em{font-style:normal;opacity:.85;margin-left:3px;font-size:10px}
 @media (max-width:560px){.ugrid{grid-template-columns:repeat(auto-fill,minmax(46px,1fr))}}
+
+/* ---------- v2.3: temps needed ---------- */
+.hrnote{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px}
+.covgrid.temps td{text-align:center;vertical-align:middle}
+.covgrid.temps .selcol{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.daybtn{font:inherit;font-weight:700;padding:4px 8px;border-radius:5px;border:1px solid transparent;background:none;color:inherit}
+.daybtn:hover{border-color:var(--line)}
+.daybtn[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.tneed{min-width:44px;padding:6px 8px;border-radius:6px;border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));font-family:var(--f-mono);font-weight:700;font-size:14px;color:var(--ink);
+  background:color-mix(in srgb,var(--warn) calc(var(--heat) * .45),var(--surface))}
+.tneed:hover{border-color:var(--warn)}
+.covgrid.temps .ok{color:var(--accent-2);font-weight:700}
+.covgrid.temps tr.tot td,.covgrid.temps tr.tot th{border-top:2px solid var(--line)}
+.places{display:flex;flex-wrap:wrap;gap:4px}
+.places span{padding:2px 8px;border-radius:999px;background:var(--sunk);font-size:12.5px;white-space:nowrap}

@@ -25,6 +25,9 @@ from (values
   ('Paul Walker',   'DSP II',  500, 40, false, false, array['house','campus'])
 ) as v(name, level, days, target, lic, cna, keys);
 
+-- 120 day residents = 6 per home across 20 homes, which makes 15 outing clusters of 8
+update public.homes set residents = 6;
+
 -- demo residents: first names only, as many per home as the Homes tab says; about 1 in 9 needs their own DSP
 insert into public.residents (first_name, home_id, own_dsp, demo)
 select (array['James','Mary','Darnell','Linda','Kevin','Angela','Tyrone','Denise','Brandon','Monique','Eric','Shanice',
@@ -35,6 +38,11 @@ from public.homes h, generate_series(1, h.residents) g;
 
 select public.generate_clusters(to_char(current_date, 'YYYY-MM'), false);
 select public.generate_clusters(to_char(current_date + 31, 'YYYY-MM'), false);
+
+-- outing sign-ups pointing at a cluster that no longer exists (e.g. after going from 18 clusters to 15)
+delete from public.dsp_signups s where s.cluster_no is not null and s.shift_date >= current_date
+  and exists (select 1 from public.resident_clusters c where c.month = to_char(s.shift_date, 'YYYY-MM'))
+  and not exists (select 1 from public.resident_clusters c where c.month = to_char(s.shift_date, 'YYYY-MM') and c.cluster_no = s.cluster_no);
 
 -- shifts from 2 weeks ago to 3 weeks out: mostly 8-hour days (two back-to-back blocks)
 do $$

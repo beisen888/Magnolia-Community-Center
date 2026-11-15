@@ -111,7 +111,7 @@ function demoTeams() {
   ];
 }
 function demoHomes() {
-  return Array.from({ length: 20 }, (_, i) => ({ id: i + 1, name: `Home ${i + 1}`, cluster: "ABCD"[Math.floor(i / 5)], location: i < 5 ? "Campus" : "Community", residents: 6 + ((i + 1) % 3), sort: i + 1 }));
+  return Array.from({ length: 20 }, (_, i) => ({ id: i + 1, name: `Home ${i + 1}`, cluster: "ABCD"[Math.floor(i / 5)], location: i < 5 ? "Campus" : "Community", residents: 6, sort: i + 1 }));
 }
 const DEMO_NAMES = ["James", "Mary", "Darnell", "Linda", "Kevin", "Angela", "Tyrone", "Denise", "Brandon", "Monique", "Eric", "Shanice", "Joseph", "Patricia", "Marcus", "Yolanda", "Henry", "Carla",
   "Isaiah", "Renee", "Louis", "Bernadette", "Calvin", "Tasha", "Victor", "Jasmine", "Wendell", "Lorraine", "Oscar", "Keyana", "Raymond", "Felicia", "Terrence", "Gwen", "Alvin", "Dana"];
@@ -179,7 +179,7 @@ function demoSignups(employees, teams, ctx, today) {
 
 /* ---------------- Preview: demo data in localStorage ---------------- */
 function previewBackend(cfg) {
-  const KEY = "magnolia-dsp-preview-v3";
+  const KEY = "magnolia-dsp-preview-v4";
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const read = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch (_) { return null; } };
   const write = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (_) {} };

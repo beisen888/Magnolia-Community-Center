@@ -700,3 +700,65 @@ update public.dsp_signups s set home_id = h.id
 from (select id, row_number() over (order by sort, id) - 1 as rn, count(*) over () as n from public.homes) h
 where s.home_id is null and s.team_id in (select id from public.teams where staffing = 'home') and h.rn = s.id % h.n;
 alter table public.dsp_signups enable trigger dsp_signups_capacity;
+
+-- =====================================================================================
+-- v2.3: tell HR about unfilled shifts (so they know how many temp DSPs to request). Safe to re-run.
+-- =====================================================================================
+
+-- every slot starting in the next p_hours hours that still has open spots
+create or replace function public.dsp_open_slots(p_hours int default 48)
+returns table (shift_date date, block int, team text, place text, need int, have int)
+language sql stable security definer set search_path = public as $$
+  with days as (
+    select g::date as d from generate_series(public.org_today(), public.org_today() + (p_hours / 24 + 1), interval '1 day') g
+  ), u as (
+    select d.d, b.b, t.id as team_id, t.sort as ts, coalesce(nullif(t.short_name, ''), t.name) as team,
+           h.id as home_id, null::int as cluster_no, h.name as place, h.sort as o
+    from days d cross join generate_series(0, 5) b(b)
+    join public.teams t on t.active and t.staffing = 'home' and t.needs[b.b + 1] > 0
+    cross join public.homes h
+    union all
+    select d.d, b.b, t.id, t.sort, coalesce(nullif(t.short_name, ''), t.name), null, c.cluster_no, 'Cluster ' || c.cluster_no, c.cluster_no
+    from days d cross join generate_series(0, 5) b(b)
+    join public.teams t on t.active and t.staffing = 'cluster' and t.needs[b.b + 1] > 0
+    join (select distinct month, cluster_no from public.resident_clusters) c
+      on c.month = to_char(d.d, 'YYYY-MM') and public.cluster_block(t.id, d.d, c.cluster_no) = b.b
+    union all
+    select d.d, b.b, t.id, t.sort, coalesce(nullif(t.short_name, ''), t.name), null, null, '', 0
+    from days d cross join generate_series(0, 5) b(b)
+    join public.teams t on t.active and t.needs[b.b + 1] > 0
+      and (t.staffing = 'fixed' or (t.staffing = 'cluster'
+           and not exists (select 1 from public.resident_clusters where month = to_char(d.d, 'YYYY-MM'))))
+  ), x as (
+    select u.*, public.slot_need(u.team_id, u.d, u.b, u.home_id, u.cluster_no) as need,
+           public.slot_count(u.d, u.b, u.team_id, u.home_id, u.cluster_no) as have
+    from u
+    where public.shift_starts_at(u.d, u.b) > now()
+      and public.shift_starts_at(u.d, u.b) <= now() + make_interval(hours => p_hours)
+  )
+  select x.d, x.b, x.team, x.place, x.need, x.have from x where x.need > x.have order by x.d, x.b, x.ts, x.o
+$$;
+
+-- one HR summary per day: the first caller for a day gets true
+create table if not exists public.hr_digest_log (day date primary key, sent_at timestamptz not null default now());
+alter table public.hr_digest_log enable row level security;  -- server only
+
+create or replace function public.hr_digest_claim(p_day date) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.hr_digest_log (day) values (p_day) on conflict do nothing;
+  return found;
+end $$;
+
+create or replace function public.hr_contacts()
+returns table (user_id uuid, email text, name text)
+language sql stable security definer set search_path = public as $$
+  select p.id, u.email::text, p.name from public.profiles p join auth.users u on u.id = p.id where p.is_admin
+$$;
+
+revoke execute on function public.dsp_open_slots(int), public.hr_digest_claim(date), public.hr_contacts() from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.dsp_open_slots(int), public.hr_digest_claim(date), public.hr_contacts() to service_role;
+  end if;
+end $$;

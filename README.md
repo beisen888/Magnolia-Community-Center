@@ -61,6 +61,8 @@ Vercel → Project → **Settings → Domains** → add e.g. `shifts.yourorg.org
   1. HR → Settings → **Create alert keys**. Copy the private key into Vercel as `VAPID_PRIVATE_KEY`, then redeploy.
   2. Run `supabase/alerts-cron.sql` once in the Supabase SQL editor (pings `/api/notify` every 10 minutes).
   3. Each DSP taps **Turn on phone alerts** under My week → My profile. iPhone users first add the site to their home screen (Share → Add to Home Screen).
+- **Unfilled shifts → HR (v2.3):** HR → Temps needed shows every open spot for the next 7 days by block, house and cluster, with a CSV to send the staffing agency. Spots inside 48 hours are marked firm (DSPs can't drop any more). Every morning at 7 AM (`HR_DIGEST_HOUR`) `/api/notify` emails and pushes the 48-hour list to everyone with HR access. Test it: `/api/notify?digest=1` with the `CRON_SECRET`.
+- **Clusters:** 120 day residents (6 per home) make 15 outing clusters of 8.
 
 ## Handing it to a client
 See **HANDOFF.md**: transfer this board, or let them build their own from a template.
