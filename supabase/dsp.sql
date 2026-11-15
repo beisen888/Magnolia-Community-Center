@@ -817,3 +817,193 @@ revoke execute on function public.hr_set_temps(date, int, int, int, int, int) fr
 grant execute on function public.hr_set_temps(date, int, int, int, int, int) to authenticated;
 
 do $$ begin alter publication supabase_realtime add table public.temp_cover; exception when duplicate_object then null; end $$;
+
+-- =====================================================================================
+-- v2.5: time off, call-outs, shift swaps (offer → claim → approve), temp-hours history. Safe to re-run.
+-- =====================================================================================
+
+-- message every HR admin (goes out by push/email on the next /api/notify run)
+create or replace function public.notify_hr(p_title text, p_body text) returns void
+language sql security definer set search_path = public as $$
+  insert into public.notify_queue (employee_id, title, body)
+  select e.id, p_title, p_body from public.employees e join public.profiles p on p.id = e.user_id where p.is_admin
+$$;
+revoke execute on function public.notify_hr(text, text) from public, anon, authenticated;
+
+create or replace function public.slot_label(p_date date, p_block int, p_team int, p_home int, p_cluster int) returns text
+language sql stable security definer set search_path = public as $$
+  select to_char(p_date, 'Dy Mon FMDD') || ' ' || (array['12–4 AM','4–8 AM','8 AM–12 PM','12–4 PM','4–8 PM','8 PM–12 AM'])[p_block + 1]
+    || ' · ' || coalesce((select coalesce(nullif(short_name, ''), name) from public.teams where id = p_team), '')
+    || coalesce(' · ' || (select name from public.homes where id = p_home), '')
+    || coalesce(' · Cluster ' || p_cluster, '')
+$$;
+
+-- ---------- time off: days a DSP can't work ----------
+create table if not exists public.time_off (
+  id          bigint generated always as identity primary key,
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  day         date not null,
+  note        text not null default '' check (char_length(note) <= 120),
+  created_at  timestamptz not null default now(),
+  unique (employee_id, day)
+);
+alter table public.time_off enable row level security;
+grant select, insert, delete on public.time_off to authenticated;
+drop policy if exists "read time off" on public.time_off;
+create policy "read time off" on public.time_off for select to authenticated using (true);
+drop policy if exists "add time off" on public.time_off;
+create policy "add time off" on public.time_off for insert to authenticated
+  with check (public.is_admin() or (employee_id = public.my_employee_id() and day >= public.org_today()));
+drop policy if exists "remove time off" on public.time_off;
+create policy "remove time off" on public.time_off for delete to authenticated
+  using (public.is_admin() or employee_id = public.my_employee_id());
+
+-- ---------- call-outs: "I can't make it" inside 48 hours ----------
+create table if not exists public.callouts (
+  id          bigint generated always as identity primary key,
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  shift_date  date not null,
+  block       smallint not null,
+  team_id     int references public.teams(id) on delete set null,
+  home_id     int references public.homes(id) on delete set null,
+  cluster_no  smallint,
+  reason      text not null default '',
+  filled_by   uuid references public.employees(id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+alter table public.callouts enable row level security;
+grant select on public.callouts to authenticated;
+drop policy if exists "read callouts" on public.callouts;
+create policy "read callouts" on public.callouts for select to authenticated
+  using (public.is_admin() or employee_id = public.my_employee_id());
+
+-- removes the shift (even inside 48 hours), lets the waitlist fill it, and tells HR either way
+create or replace function public.call_out(p_signup bigint, p_reason text default '')
+returns boolean language plpgsql security definer set search_path = public as $$
+declare s public.dsp_signups; before int; filler uuid; who text;
+begin
+  select * into s from public.dsp_signups where id = p_signup;
+  if not found then raise exception 'That shift is already gone' using errcode = 'P0001'; end if;
+  if not (public.is_admin() or s.employee_id = public.my_employee_id()) then raise exception 'Not your shift' using errcode = '42501'; end if;
+  if public.shift_starts_at(s.shift_date, s.block) <= now() then raise exception 'That shift already started' using errcode = 'P0001'; end if;
+  select count(*) into before from public.dsp_signups where shift_date = s.shift_date and block = s.block and team_id = s.team_id
+    and home_id is not distinct from s.home_id and cluster_no is not distinct from s.cluster_no;
+  delete from public.dsp_signups where id = p_signup;   -- the waitlist trigger fills the spot if someone is waiting
+  if (select count(*) from public.dsp_signups where shift_date = s.shift_date and block = s.block and team_id = s.team_id
+        and home_id is not distinct from s.home_id and cluster_no is not distinct from s.cluster_no) = before then
+    select employee_id into filler from public.dsp_signups where shift_date = s.shift_date and block = s.block and team_id = s.team_id
+      and home_id is not distinct from s.home_id and cluster_no is not distinct from s.cluster_no order by id desc limit 1;
+  end if;
+  insert into public.callouts (employee_id, shift_date, block, team_id, home_id, cluster_no, reason, filled_by)
+  values (s.employee_id, s.shift_date, s.block, s.team_id, s.home_id, s.cluster_no, left(coalesce(p_reason, ''), 200), filler);
+  select name into who from public.employees where id = s.employee_id;
+  perform public.notify_hr('Call-out: ' || coalesce(nullif(who, ''), 'A DSP'),
+    public.slot_label(s.shift_date, s.block, s.team_id, s.home_id, s.cluster_no) ||
+    case when filler is not null then '. Covered from the waitlist by ' || coalesce((select name from public.employees where id = filler), 'a DSP') || '.'
+         else '. Nobody was waiting: this spot needs a temp or an assignment.' end);
+  return filler is not null;
+end $$;
+revoke execute on function public.call_out(bigint, text) from public, anon;
+grant execute on function public.call_out(bigint, text) to authenticated;
+
+-- ---------- shift swaps: offer a shift, a teammate claims it, HR or a Lead DSP approves ----------
+create table if not exists public.shift_offers (
+  id            bigint generated always as identity primary key,
+  signup_id     bigint not null unique references public.dsp_signups(id) on delete cascade,
+  from_employee uuid not null references public.employees(id) on delete cascade,
+  to_employee   uuid references public.employees(id) on delete set null,
+  status        text not null default 'open' check (status in ('open', 'claimed')),
+  created_at    timestamptz not null default now()
+);
+alter table public.shift_offers enable row level security;
+grant select on public.shift_offers to authenticated;
+drop policy if exists "read offers" on public.shift_offers;
+create policy "read offers" on public.shift_offers for select to authenticated using (true);
+
+create or replace function public.is_lead_for(p_team int) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.employees where id = public.my_employee_id() and level = 'Lead DSP' and p_team = any (teams))
+$$;
+
+create or replace function public.offer_shift(p_signup bigint) returns void
+language plpgsql security definer set search_path = public as $$
+declare s public.dsp_signups;
+begin
+  select * into s from public.dsp_signups where id = p_signup;
+  if not found or s.employee_id is distinct from public.my_employee_id() then raise exception 'Not your shift' using errcode = '42501'; end if;
+  if public.shift_starts_at(s.shift_date, s.block) <= now() then raise exception 'That shift already started' using errcode = 'P0001'; end if;
+  insert into public.shift_offers (signup_id, from_employee) values (p_signup, s.employee_id) on conflict (signup_id) do nothing;
+end $$;
+
+create or replace function public.cancel_offer(p_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from public.shift_offers where id = p_id and (public.is_admin() or from_employee = public.my_employee_id());
+end $$;
+
+create or replace function public.claim_offer(p_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+declare o public.shift_offers; s public.dsp_signups; me uuid := public.my_employee_id();
+begin
+  select * into o from public.shift_offers where id = p_id for update;
+  if not found or o.status <> 'open' then raise exception 'Someone already claimed that shift' using errcode = 'P0001'; end if;
+  select * into s from public.dsp_signups where id = o.signup_id;
+  if me is null or me = o.from_employee then raise exception 'You can''t claim your own shift' using errcode = 'P0001'; end if;
+  if not exists (select 1 from public.employees where id = me and active and s.team_id = any (teams)) then raise exception 'That shift is on a team you''re not on' using errcode = 'P0001'; end if;
+  if exists (select 1 from public.dsp_signups where employee_id = me and shift_date = s.shift_date and block = s.block) then raise exception 'You already work at that time' using errcode = 'P0001'; end if;
+  update public.shift_offers set status = 'claimed', to_employee = me where id = p_id;
+  perform public.notify_hr('Shift swap needs approval',
+    coalesce((select nullif(name, '') from public.employees where id = me), 'A DSP') || ' wants to take ' ||
+    coalesce((select nullif(name, '') from public.employees where id = o.from_employee), 'a DSP') || '''s shift: ' ||
+    public.slot_label(s.shift_date, s.block, s.team_id, s.home_id, s.cluster_no) || '.');
+end $$;
+
+create or replace function public.decide_offer(p_id bigint, p_ok boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare o public.shift_offers; s public.dsp_signups; lbl text;
+begin
+  select * into o from public.shift_offers where id = p_id for update;
+  if not found or o.status <> 'claimed' or o.to_employee is null then raise exception 'Nothing to approve there' using errcode = 'P0001'; end if;
+  select * into s from public.dsp_signups where id = o.signup_id;
+  if not (public.is_admin() or public.is_lead_for(s.team_id)) then raise exception 'HR or the team''s Lead DSP approves swaps' using errcode = '42501'; end if;
+  lbl := public.slot_label(s.shift_date, s.block, s.team_id, s.home_id, s.cluster_no);
+  if p_ok then
+    if exists (select 1 from public.dsp_signups where employee_id = o.to_employee and shift_date = s.shift_date and block = s.block) then
+      raise exception 'They already work at that time now' using errcode = 'P0001'; end if;
+    update public.dsp_signups set employee_id = o.to_employee where id = s.id;
+    delete from public.alert_log where signup_id = s.id;       -- the new person gets fresh reminders
+    delete from public.shift_offers where id = p_id;
+    insert into public.notify_queue (employee_id, title, body) values
+      (o.to_employee, 'Swap approved', 'You now have ' || lbl || '.'),
+      (o.from_employee, 'Swap approved', 'You''re off ' || lbl || '.');
+  else
+    update public.shift_offers set status = 'open', to_employee = null where id = p_id;
+    insert into public.notify_queue (employee_id, title, body) values (o.to_employee, 'Swap not approved', lbl || ' stays with the original DSP for now.');
+  end if;
+end $$;
+revoke execute on function public.offer_shift(bigint), public.cancel_offer(bigint), public.claim_offer(bigint), public.decide_offer(bigint, boolean) from public, anon;
+grant execute on function public.offer_shift(bigint), public.cancel_offer(bigint), public.claim_offer(bigint), public.decide_offer(bigint, boolean), public.is_lead_for(int) to authenticated;
+
+-- ---------- temp hours history (for the monthly trend) ----------
+alter table public.temp_cover add column if not exists demo boolean not null default false;
+create or replace function public.temp_hours_history(p_months int default 6)
+returns table (month text, team_id int, home_id int, hours int)
+language sql stable security definer set search_path = public as $$
+  select to_char(shift_date, 'YYYY-MM'), team_id, home_id, (sum(count) * 4)::int
+  from public.temp_cover
+  where public.is_admin() and shift_date >= date_trunc('month', public.org_today()) - make_interval(months => p_months - 1)
+    and shift_date <= public.org_today() + 7
+  group by 1, 2, 3
+$$;
+create or replace function public.hr_wipe_demo_extras() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'HR only' using errcode = '42501'; end if;
+  delete from public.temp_cover where demo;
+end $$;
+revoke execute on function public.temp_hours_history(int), public.hr_wipe_demo_extras() from public, anon;
+grant execute on function public.temp_hours_history(int), public.hr_wipe_demo_extras() to authenticated;
+
+do $$ begin alter publication supabase_realtime add table public.shift_offers; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.time_off;     exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.callouts;     exception when duplicate_object then null; end $$;

@@ -515,3 +515,57 @@ dialog{border:0;border-top:6px solid var(--gold);box-shadow:0 30px 60px -20px rg
 main{padding-bottom:8px}
 @media (max-width:600px){.tagline{font-size:13.5px;padding:5px 12px}.wordmark .wm{font-size:28px}.brand svg{width:34px;height:38px}.topbar{padding-block:10px}.bignum{font-size:44px}.kpi .v{font-size:32px}.hero{padding:24px}}
 @media print{.navbar,.tagline,.sitefoot{display:none!important}.card,table.data{box-shadow:none}}
+
+/* ---------- v3.1: swaps, call-outs, time off, staffing mix, temp trend, celebration ---------- */
+.btn.gold{background:var(--gold);border-color:var(--gold);color:#1F2A20}
+.btn.gold:hover{background:#F0BE2E!important;border-color:#F0BE2E!important}
+.swaps .swh{margin:12px 0 0;font-size:14.5px}
+.swaps .wrow,.att .wrow{flex-wrap:wrap}
+.timeoff{display:flex;flex-direction:column;gap:2px;margin:10px 0 4px;padding:10px 12px;background:var(--sunk);border-radius:6px}
+.timeoff form{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.timeoff form input[name="note"]{flex:1;min-width:120px}
+.timeoff .places span{background:var(--surface);border:1px solid var(--line)}
+.places .x{border:0!important;background:none!important;padding:0 0 0 4px;color:var(--muted);font-size:14px}
+.places .x::before{content:none}
+.attgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px;margin-bottom:18px}
+.att h3{font-size:18px}
+ul.plain{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:14px}
+ul.plain li{display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap}
+.mix{margin-bottom:18px}
+.mix h3{font-size:18px}
+.mixbar{display:flex;gap:2px;height:26px;border-radius:6px;overflow:hidden;background:var(--surface)}
+.mixbar span{min-width:3px;border-radius:3px}
+.mixbar .own,.mixkey i.own{background:var(--accent)}
+.mixbar .tmp,.mixkey i.tmp{background:var(--gold)}
+.mixbar .opn,.mixkey i.opn{background:repeating-linear-gradient(45deg,var(--warn) 0 4px,color-mix(in srgb,var(--warn) 45%,var(--surface)) 4px 8px)}
+.mixbar span:hover{filter:brightness(1.12)}
+.mixkey{display:flex;flex-wrap:wrap;gap:6px 20px;margin-top:10px;font-size:13.5px;color:var(--muted)}
+.mixkey span{display:inline-flex;align-items:center;gap:7px}
+.mixkey b{color:var(--ink)}
+.mixkey i{width:12px;height:12px;border-radius:3px;display:block}
+.trendgrid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:28px;align-items:start}
+@media (max-width:760px){.trendgrid{grid-template-columns:minmax(0,1fr)}}
+.trend .headline{margin:0 0 4px;font-size:16px}
+.trend .headline b{font-family:var(--f-display);font-weight:400;font-size:30px;margin-right:6px}
+.trend .headline .down{color:var(--good)}
+.trend .headline .up{color:var(--warn)}
+.bars{display:flex;align-items:flex-end;gap:10px;height:190px;border-bottom:1px solid var(--line);padding-top:22px}
+.bcol{flex:1;max-width:72px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;position:relative}
+.bcol .bar{width:100%;max-width:44px;background:var(--accent-2);border-radius:4px 4px 0 0;transition:filter .12s}
+.bcol.partial .bar{background:repeating-linear-gradient(45deg,var(--accent-2) 0 5px,color-mix(in srgb,var(--accent-2) 55%,var(--surface)) 5px 10px)}
+.bcol:hover .bar{filter:brightness(1.15)}
+.bcol .bv{font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:4px;font-variant-numeric:tabular-nums}
+.bcol .bl{position:absolute;bottom:-24px;font-size:12.5px;color:var(--muted)}
+.trend .bars+.note{margin-top:32px}
+table.mini{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px}
+table.mini th{text-align:left;font-weight:600;padding:6px 10px 6px 0;white-space:nowrap}
+table.mini td{padding:6px 0}
+table.mini td:nth-child(2){width:55%}
+table.mini td:last-child{text-align:right;padding-left:10px;white-space:nowrap;font-size:12.5px}
+.hbar{display:block;height:10px;border-radius:0 4px 4px 0;background:var(--accent-2);min-width:3px}
+.confetti{position:fixed;inset:0;pointer-events:none;z-index:60;overflow:hidden}
+.confetti i{position:absolute;top:-14px;width:9px;height:14px;border-radius:2px;animation:fall linear forwards}
+@keyframes fall{to{top:105%;transform:rotate(720deg) translateX(40px)}}
+.att .wrow>div{flex:1 1 100%}
+.att ul.plain li{border-top:1px solid var(--line);padding-top:6px}
+.att ul.plain li:first-child{border-top:0;padding-top:0}

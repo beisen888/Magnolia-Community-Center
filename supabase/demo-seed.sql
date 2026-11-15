@@ -95,7 +95,7 @@ begin
     continue when hm is null or ht is null;
     insert into public.employees (name, level, hire_date, weekly_target, has_license, has_cna, teams, demo)
     values (fn[1 + g % 20] || ' ' || ln[1 + g / 20], case when g % 9 = 3 then 'Lead DSP' when g % 3 = 1 then 'DSP II' else 'DSP I' end,
-            current_date - (30 + (g * 37) % 1500), 40, g % 4 = 0, g % 7 = 0, array[ht], true) returning id into eid;
+            current_date - (30 + (g * 37) % 1500), case when g % 3 = 2 then 32 else 40 end, g % 4 = 0, g % 7 = 0, array[ht], true) returning id into eid;
     for k in -14..20 loop
       d := current_date + k; di := d - date '2000-01-03';
       continue when di % 7 in (j * 2, j * 2 + 1);
@@ -125,3 +125,13 @@ begin
     end loop;
   end loop;
 end $$;
+
+-- Six months of demo temp bookings in House & Daily Living, trending down (for the "Temp hours by month" chart)
+delete from public.temp_cover where demo;
+insert into public.temp_cover (shift_date, block, team_id, home_id, count, demo)
+select d::date, (extract(doy from d)::int + h.sort) % 6, t.id, h.id, 1, true
+from generate_series(date_trunc('month', current_date) - interval '5 months', current_date - 1, interval '1 day') d
+cross join public.homes h
+join public.teams t on t.key = 'house'
+where (extract(doy from d)::int * 7 + h.sort * 13) % 100 < 12 + 40 * (current_date - d::date) / 180 + (h.sort % 4) * 3
+on conflict do nothing;
