@@ -5,7 +5,7 @@ const CFG = window.MAGNOLIA, BLOCKS = CFG.blocks;
 const TABS = [
   { id: "home", label: "My week" },
   { id: "schedule", label: "Schedule" },
-  { id: "teams", label: "Teams & homes" },
+  { id: "teams", label: "Teams & clusters" },
   { id: "quiz", label: "Find my team" },
   { id: "hr", label: "HR", admin: true },
 ];
@@ -152,14 +152,19 @@ function usualHome(emp, teamId) {
   const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
   return best ? +best[0] : null;
 }
-/* the hourly area rotation from the proposal: each on-campus team visits areas A–D one hour at a time */
-function rotation(team, block) {
-  const b = BLOCKS[block], ti = activeTeams().findIndex((t) => t.id === team.id), out = [];
+/* on-campus rotation: each daytime team spends one hour with each of 4 resident clusters,
+   skipping clusters that are out on an outing that block; it shifts day to day so every cluster gets a turn */
+function rotation(team, block, date) {
+  const b = BLOCKS[block], ti = Math.max(activeTeams().filter((t) => t.staffing === "fixed").findIndex((t) => t.id === team.id), 0);
   if (b.night) return null;
+  const ds = date || TODAY, cm = monthClusters(monthKey(ds)), out = [];
+  const outing = activeTeams().find((t) => t.staffing === "cluster");
+  let nos = Object.keys(cm).map(Number).sort((a, c) => a - c);
+  const home = nos.filter((c) => !outing || clusterBlock(outing, ds, c) !== block);
+  if (home.length >= 4) nos = home;
   for (let h = 0; h < 4; h++) {
-    const c = "ABCD"[(Math.max(ti, 0) + h) % 4];
-    const homes = S.homes.filter((x) => x.cluster === c).map((x) => x.name.replace(/^Home\s*/, ""));
-    out.push({ hour: b.start + h, cluster: c, homes, activity: team.activities.length ? team.activities[(h + Math.max(ti, 0)) % team.activities.length] : "" });
+    const c = nos.length ? nos[(dayIndex(ds) * 3 + ti * 4 + h) % nos.length] : null;
+    out.push({ hour: b.start + h, cluster: c, size: c ? cm[c].members.length : 0, activity: team.activities.length ? team.activities[(h + ti) % team.activities.length] : "" });
   }
   return out;
 }
@@ -455,9 +460,9 @@ function myTeamCard(emp, ws, we) {
 function rotationHtml(team, s) {
   if (team.staffing === "home") { const h = homeById(s.homeId); const rs = S.residents.filter((r) => r.active !== false && r.homeId === s.homeId); return `<p class="muted note">Stay with ${esc(h ? h.name : "your house")}${rs.length ? ": " + rs.map((r) => esc(r.firstName)).join(", ") : ""}.</p>`; }
   if (team.staffing === "cluster") { const g = groupOf(s.date, s.clusterNo); return g ? `<div style="margin-top:10px"><b style="font-size:13.5px">Your cluster: ${plural(g.members.length, "resident")}</b>${groupHtml(g, true)}</div>` : ""; }
-  const r = rotation(team, s.block);
+  const r = rotation(team, s.block, s.date);
   if (!r) return `<p class="muted note">Overnight residential coverage.</p>`;
-  return `<div class="rot">${r.map((x) => `<div><b>${hShort(x.hour)}–${hShort(x.hour + 1)} · Area ${x.cluster}</b>${esc(x.activity)}<br><span class="muted" style="font-size:11.5px">Homes ${x.homes[0] || ""}–${x.homes[x.homes.length - 1] || ""}</span></div>`).join("")}</div>`;
+  return `<div class="rot">${r.map((x) => `<div><b>${hShort(x.hour)}–${hShort(x.hour + 1)}${x.cluster ? " · Cluster " + x.cluster : ""}</b>${esc(x.activity)}${x.size ? `<br><span class="muted" style="font-size:11.5px">${x.size} residents</span>` : ""}</div>`).join("")}</div>`;
 }
 function nextShift(emp) {
   const nowH = NOW.getHours();
@@ -612,24 +617,12 @@ function viewTeams() {
   h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>Team roles</h2><span class="muted" style="font-size:14px">HR assigns each person's role</span></div>
     <div class="ladder">${[["Lead DSP", "Runs the team's shifts, mentors DSP Is, leads shadow shifts and holds a weekly check-in."], ["DSP II", "Experienced DSP (6+ months). Helps run activities and works with volunteers."], ["DSP I", "First 6 months. Learns the team's routine with shadow shifts and a Lead DSP as mentor."]].map(([n, d]) => `<div class="rung${n === lvl ? " me" : ""}"><span class="eyebrow">${n === lvl ? "Your role" : "Role"}</span><div class="v" style="font-size:20px">${n}</div><div class="muted" style="font-size:14px">${d}</div></div>`).join("")}</div></section>`;
   h += outingClusters(monthKey(TODAY), false);
-  h += `<section style="margin-top:18px"><div class="sec-title"><h2>Homes by area</h2><span class="muted" style="font-size:13px">${S.homes.length} homes · ${S.homes.reduce((a, x) => a + (+x.residents || 0), 0)} residents</span></div><div class="clusters">`;
-  for (const c of "ABCD") {
-    const hs = S.homes.filter((x) => x.cluster === c).sort((a, b) => a.sort - b.sort);
-    h += `<div class="card cluster"><h3>Area ${c}</h3><ul>${hs.map((x) => `<li><span>${esc(x.name)}</span><span class="muted">${esc(x.location)} · ${x.residents}</span></li>`).join("") || "<li class='muted'>No homes</li>"}</ul></div>`;
-  }
-  h += `</div></section>`;
   const teams = activeTeams().filter((t) => t.staffing === "fixed" && t.needs[3]);
-  if (teams.length) {
-    h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>How an on-campus 12–4 PM shift rotates</h2><span class="muted" style="font-size:13px">Each team visits every area once, one hour at a time</span></div><div class="tw"><table class="grid"><thead><tr><th>Hour</th>${"ABCD".split("").map((c) => `<th>Area ${c}</th>`).join("")}</tr></thead><tbody>`;
-    for (let hr = 0; hr < 4; hr++) {
-      h += `<tr><th>${hShort(12 + hr)}–${hShort(13 + hr)}</th>`;
-      for (const c of "ABCD") {
-        const t = teams.find((tt) => { const r = rotation(tt, 3); return r && r[hr].cluster === c; });
-        h += t ? `<td class="${teamClass(t)}"><b>${esc(rotation(t, 3)[hr].activity)}</b><small>${esc(t.shortName)}</small></td>` : `<td style="background:var(--sunk);border-left-color:var(--line)"><small>House staff</small></td>`;
-      }
-      h += `</tr>`;
-    }
-    h += `</tbody></table></div><p class="muted" style="font-size:12px;margin:8px 0 0">Illustrative. Every home also keeps its own House & Daily Living DSPs.</p></section>`;
+  if (teams.length && Object.keys(monthClusters(monthKey(TODAY))).length) {
+    const rots = teams.map((t) => rotation(t, 3, TODAY));
+    h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>Today's 12–4 PM rotation</h2><span class="muted" style="font-size:13px">Each on-campus team spends an hour with each of 4 clusters</span></div><div class="tw"><table class="grid"><thead><tr><th>Hour</th>${teams.map((t) => `<th>${esc(t.shortName)}</th>`).join("")}</tr></thead><tbody>`;
+    for (let hr = 0; hr < 4; hr++) h += `<tr><th>${hShort(12 + hr)}–${hShort(13 + hr)}</th>${teams.map((t, i) => `<td class="${teamClass(t)}"><b>Cluster ${rots[i][hr].cluster}</b><small>${esc(rots[i][hr].activity)}</small></td>`).join("")}</tr>`;
+    h += `</tbody></table></div><p class="muted" style="font-size:12px;margin:8px 0 0">Clusters on an outing that afternoon are skipped. The rotation changes day to day so every cluster gets a turn.</p></section>`;
   }
   return h;
 }
@@ -637,7 +630,7 @@ function outingClusters(month, hrView) {
   const t = activeTeams().find((x) => x.staffing === "cluster"), cm = monthClusters(month), nos = Object.keys(cm).map(Number).sort((a, b) => a - b);
   if (!t && !hrView) return "";
   const today = monthKey(TODAY) === month ? TODAY : month + "-01";
-  let h = `<section style="margin-top:18px"><div class="sec-title"><h2>Outing clusters · ${monthName(month)}</h2><span class="muted" style="font-size:13px">${nos.length ? `${plural(nos.length, "cluster")} of 8 or fewer · new clusters every month` : ""}</span></div>`;
+  let h = `<section style="margin-top:18px"><div class="sec-title"><h2>Resident clusters · ${monthName(month)}</h2><span class="muted" style="font-size:13px">${nos.length ? `${plural(nos.length, "cluster")} of 8 or fewer · the same groups every month` : ""}</span></div>`;
   if (!nos.length) return h + `<div class="card empty" style="padding:18px">${S.residents.length ? "Clusters for this month will appear once someone opens it." : "No residents entered yet. HR adds them under HR → Residents."}</div></section>`;
   h += `<div class="clusters">`;
   for (const c of nos) {
@@ -839,10 +832,10 @@ function hrResidents() {
   const homes = sortedHomes(), list = [...S.residents].sort((a, b) => ((homeById(a.homeId) || {}).sort || 99) - ((homeById(b.homeId) || {}).sort || 99) || a.firstName.localeCompare(b.firstName));
   const ones = S.residents.filter((r) => r.active !== false && r.ownDsp).length, act = S.residents.filter((r) => r.active !== false).length;
   const homeOpts = (sel) => `<option value="">No house</option>` + homes.map((x) => `<option value="${x.id}"${x.id === sel ? " selected" : ""}>${esc(x.name)}</option>`).join("");
-  let h = `<div class="sec-title"><h2>Residents & outing clusters</h2><div class="weeknav"><button data-act="resmonth" data-d="-1" aria-label="Previous month">‹</button><b style="min-width:8em;text-align:center">${monthName(S.resMonth)}</b><button data-act="resmonth" data-d="1" aria-label="Next month">›</button></div></div>
-    <p class="muted" style="margin:-4px 0 14px;font-size:13.5px">Store first names only, never diagnoses. Every month the app deals residents into new outing clusters of 8 or fewer, spreading out people who need their own DSP. Each outing gets 2 DSPs plus 1 for every resident who needs their own.</p>
+  let h = `<div class="sec-title"><h2>Residents & clusters</h2><div class="weeknav"><button data-act="resmonth" data-d="-1" aria-label="Previous month">‹</button><b style="min-width:8em;text-align:center">${monthName(S.resMonth)}</b><button data-act="resmonth" data-d="1" aria-label="Next month">›</button></div></div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13.5px">Store first names only, never diagnoses. Residents are grouped into clusters of 8 or fewer, spreading out people who need their own DSP. Clusters stay the same from month to month; new residents join the smallest cluster. Each outing gets 2 DSPs plus 1 for every resident who needs their own.</p>
     <div class="cards"><div class="card kpi"><div class="v">${act}</div><div class="k">active residents</div></div><div class="card kpi"><div class="v">${ones}</div><div class="k">need their own DSP on outings</div></div><div class="card kpi"><div class="v">${Object.keys(monthClusters(S.resMonth)).length}</div><div class="k">clusters in ${monthName(S.resMonth).split(" ")[0]}</div></div></div>`;
-  h += `<div class="rowact" style="justify-content:flex-start;margin:0 0 6px"><button class="btn" data-act="clustersync" data-m="${S.resMonth}">Add new residents to ${monthName(S.resMonth).split(" ")[0]}'s clusters</button><button class="btn quiet" data-act="reshuffle" data-m="${S.resMonth}">Reshuffle ${monthName(S.resMonth).split(" ")[0]}</button></div>`;
+  h += `<div class="rowact" style="justify-content:flex-start;margin:0 0 6px"><button class="btn" data-act="clustersync" data-m="${S.resMonth}">Add new residents to clusters</button><button class="btn quiet" data-act="reshuffle" data-m="${S.resMonth}">Reshuffle clusters from ${monthName(S.resMonth).split(" ")[0]}</button></div>`;
   h += outingClusters(S.resMonth, true);
   h += `<section style="margin-top:18px"><div class="sec-title"><h2>Residents</h2></div>
     <form class="card form" data-form="resident" style="margin-bottom:12px"><label>First name<input name="first" required maxlength="40" placeholder="First name only"></label><label>House<select name="home">${homeOpts(null)}</select></label>
@@ -874,10 +867,9 @@ function hrTeams() {
   return h + `</div>`;
 }
 function hrHomes() {
-  let h = `<div class="sec-title"><h2>Homes</h2><button class="btn" data-act="addhome">Add home</button></div><div class="tw"><table class="data"><thead><tr><th>Name</th><th>Area</th><th>Location</th><th>Residents</th><th></th></tr></thead><tbody>`;
-  for (const x of [...S.homes].sort((a, b) => (a.cluster + String(a.sort).padStart(3, "0") < b.cluster + String(b.sort).padStart(3, "0") ? -1 : 1))) {
+  let h = `<div class="sec-title"><h2>Homes</h2><button class="btn" data-act="addhome">Add home</button></div><div class="tw"><table class="data"><thead><tr><th>Name</th><th>Location</th><th>Residents</th><th></th></tr></thead><tbody>`;
+  for (const x of sortedHomes()) {
     h += `<tr><td><input data-home="${x.id}" data-f="name" value="${esc(x.name)}" maxlength="60"></td>
-      <td><select data-home="${x.id}" data-f="cluster">${"ABCD".split("").map((c) => `<option${c === x.cluster ? " selected" : ""}>${c}</option>`).join("")}</select></td>
       <td><select data-home="${x.id}" data-f="location">${["Campus", "Community"].map((c) => `<option${c === x.location ? " selected" : ""}>${c}</option>`).join("")}</select></td>
       <td><input data-home="${x.id}" data-f="residents" type="number" min="0" max="20" value="${x.residents}" style="width:70px"></td>
       <td style="text-align:right"><button class="linkbtn" data-act="delhome" data-id="${x.id}" data-name="${esc(x.name)}">Remove</button></td></tr>`;
@@ -991,9 +983,9 @@ const actions = {
   ics: () => {
     const emp = myEmp(); const ss = empShifts(emp.id, TODAY, addDays(TODAY, 35));
     if (!ss.length) return toast("No upcoming shifts to add yet.");
-    const ev = ss.map((s) => { const t = teamById(s.teamId), b = BLOCKS[s.block], g = groupOf(s.date, s.clusterNo), r = t && t.staffing === "fixed" && rotation(t, s.block);
+    const ev = ss.map((s) => { const t = teamById(s.teamId), b = BLOCKS[s.block], g = groupOf(s.date, s.clusterNo), r = t && t.staffing === "fixed" && rotation(t, s.block, s.date);
       return { uid: `${s.id}`, date: s.date, start: b.start, end: b.end + extraMin(s) / 60, title: `${t ? t.shortName : "Shift"}${placeOf(s) ? " · " + placeOf(s) : ""} · Magnolia`,
-        description: g ? `Cluster ${s.clusterNo}: ${g.members.map((m) => m.firstName + (m.ownDsp ? " (1:1)" : "")).join(", ")}` : r ? r.map((x) => `${hShort(x.hour)}: Area ${x.cluster} · ${x.activity}`).join("\n") : placeOf(s) || "Residential coverage" }; });
+        description: g ? `Cluster ${s.clusterNo}: ${g.members.map((m) => m.firstName + (m.ownDsp ? " (1:1)" : "")).join(", ")}` : r ? r.map((x) => `${hShort(x.hour)}: ${x.cluster ? "Cluster " + x.cluster + " · " : ""}${x.activity}`).join("\n") : placeOf(s) || "Residential coverage" }; });
     downloadFile("magnolia-shifts.ics", buildIcs(ev, "Magnolia shifts"), "text/calendar");
     toast(`Downloaded ${ss.length} shifts. Open the file to add them to your calendar.`);
   },
@@ -1005,11 +997,11 @@ const actions = {
   admin: (d) => { const on = d.on === "1"; if (confirm(on ? `Make ${d.name} an HR admin? They'll see everyone's info and can change schedules.` : `Remove HR access from ${d.name}?`)) act(async () => { await B.setAdmin(d.user, on); S.admins = null; }, on ? `${d.name} is now HR.` : `${d.name} is no longer HR.`); },
   addteam: () => { S.editTeam = "new"; render(); },
   cancelteam: () => { S.editTeam = null; render(); },
-  addhome: () => act(() => B.saveHome({ name: `Home ${S.homes.length + 1}`, cluster: "D", location: "Community", residents: 6 }), "Home added."),
+  addhome: () => act(() => B.saveHome({ name: `Home ${S.homes.length + 1}`, cluster: "A", location: "Community", residents: 6 }), "Home added."),
   delhome: (d) => { if (confirm(`Remove ${d.name}? Its House & Daily Living shifts are removed too.`)) act(() => B.deleteHome(+d.id), "Home removed."); },
   delres: (d) => { if (confirm(`Remove ${d.name}?`)) act(() => B.deleteResident(+d.id), "Resident removed."); },
   clustersync: (d) => act(() => B.ensureClusters(d.m, false), "Clusters updated."),
-  reshuffle: (d) => { if (confirm(`Deal ${monthName(d.m)}'s clusters again from scratch? Outing shifts already booked keep their cluster number, but the residents in each cluster will change.`)) act(() => B.ensureClusters(d.m, true), "Clusters reshuffled."); },
+  reshuffle: (d) => { if (confirm(`Regroup every resident into new clusters, starting ${monthName(d.m)}? Booked shifts keep their cluster number, but the residents in each cluster will change.`)) act(() => B.ensureClusters(d.m, true), "Clusters reshuffled."); },
   ann: () => { const v = $("ann").value.trim().slice(0, 280); act(() => B.saveAnnouncement(v), v ? "Announcement posted." : "Announcement removed."); },
   publish: (d) => { if (confirm(`Publish the week of ${fmt(d.w, { month: "long", day: "numeric" })}? It locks new picks for that week and emails everyone their final schedule.`)) act(() => B.publishWeek(d.w), (r) => r && r.preview ? "Week published. (Preview mode: no emails sent.)" : `Week published. Emailed ${r.sent} of ${r.people} DSPs${r.failed && r.failed.length ? `; ${r.failed.length} failed` : ""}.`); },
   unpublish: (d) => { if (confirm("Reopen this week? DSPs will be able to pick shifts again.")) act(() => B.setWeekLock(d.w, false), "Week reopened."); },

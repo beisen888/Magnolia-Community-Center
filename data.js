@@ -5,7 +5,7 @@
  * load(from, to) → { teams, homes, employees, signups, residents, clusters, waitlist, settings }
  *   teams:     [{ id, key, name, shortName, description, activities[], needsLicense, needs[6], staffing, color, sort, active }]
  *              staffing: "fixed" (one pool per block) | "home" (per house) | "cluster" (per monthly outing cluster)
- *   homes:     [{ id, name, cluster, location, residents, sort }]   (home.cluster = area A–D)
+ *   homes:     [{ id, name, cluster, location, residents, sort }]   (home.cluster is unused)
  *   employees: [{ id, userId, name, email, level, hireDate, weeklyTarget, hasLicense, hasCna, teams[], quizTeam, active, demo }]
  *   signups:   [{ id, employeeId, date, block, teamId, homeId, clusterNo }]
  *   residents: [{ id, firstName, homeId, ownDsp, active, demo }]
@@ -215,12 +215,17 @@ function demoSignups(employees, teams, ctx, today) {
 
 /* ---------------- Preview: demo data in localStorage ---------------- */
 function previewBackend(cfg) {
-  const KEY = "magnolia-dsp-preview-v7";
+  const KEY = "magnolia-dsp-preview-v8";
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const read = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch (_) { return null; } };
   const write = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (_) {} };
+  // clusters stay the same each month: a new month copies the latest earlier month, then places new residents
   const ensure = (month, reshuffle) => {
     if (reshuffle) st.clusters = st.clusters.filter((c) => c.month !== month);
+    else if (!st.clusters.some((c) => c.month === month)) {
+      const prev = st.clusters.map((c) => c.month).filter((m) => m < month).sort().pop();
+      if (prev) st.clusters = st.clusters.concat(st.clusters.filter((c) => c.month === prev && st.residents.some((r) => r.id === c.residentId && r.active !== false)).map((c) => ({ ...c, month })));
+    }
     st.clusters = st.clusters.filter((c) => c.month !== month).concat(dealClusters(month, st.residents, st.clusters, seeded(month + ":" + (st.shuffles[month] || 0))));
   };
   const seed = () => {
@@ -380,7 +385,10 @@ function previewBackend(cfg) {
       done();
     },
     async deleteResident(id) { st.residents = st.residents.filter((r) => r.id !== id); st.clusters = st.clusters.filter((c) => c.residentId !== id); done(); },
-    async ensureClusters(month, reshuffle) { if (reshuffle) st.shuffles[month] = (st.shuffles[month] || 0) + 1; ensure(month, reshuffle); done(); },
+    async ensureClusters(month, reshuffle) {
+      if (reshuffle) { st.shuffles[month] = (st.shuffles[month] || 0) + 1; st.clusters = st.clusters.filter((c) => c.month <= month); }
+      ensure(month, reshuffle); done();
+    },
     async saveAnnouncement(text) { st.settings.announcement = text; done(); },
     async saveVapidPublic(key) { st.settings.vapidPublic = key; done(); },
     async setWeekLock(week, on) {

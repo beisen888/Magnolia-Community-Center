@@ -1007,3 +1007,53 @@ grant execute on function public.temp_hours_history(int), public.hr_wipe_demo_ex
 do $$ begin alter publication supabase_realtime add table public.shift_offers; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.time_off;     exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table public.callouts;     exception when duplicate_object then null; end $$;
+
+
+-- =====================================================================================
+-- v2.6: clusters stay the same from month to month (HR can still reshuffle). Safe to re-run.
+-- =====================================================================================
+create or replace function public.generate_clusters(p_month text, p_reshuffle boolean default false)
+returns int language plpgsql security definer set search_path = public as $$
+declare n int; k int; r record; i int; best int; sizes int[]; ones int[];
+begin
+  if p_month !~ '^\d{4}-\d{2}$' then raise exception 'Bad month' using errcode = 'P0001'; end if;
+  perform pg_advisory_xact_lock(hashtext('clusters:' || p_month));
+  if p_reshuffle then
+    if not public.is_admin() then raise exception 'HR only' using errcode = '42501'; end if;
+    delete from public.resident_clusters where month >= p_month;   -- later months copy this one again
+  elsif not exists (select 1 from public.resident_clusters where month = p_month) then
+    -- clusters stay the same each month: start from the latest earlier month
+    insert into public.resident_clusters (month, resident_id, cluster_no)
+    select p_month, c.resident_id, c.cluster_no from public.resident_clusters c join public.residents keep on keep.id = c.resident_id and keep.active
+    where c.month = (select max(month) from public.resident_clusters where month < p_month);
+  end if;
+  -- drop people who left
+  delete from public.resident_clusters c using public.residents gone
+    where c.month = p_month and c.resident_id = gone.id and not gone.active;
+  select count(*) into n from public.residents where active;
+  if n = 0 then return 0; end if;
+  k := greatest(ceil(n / 8.0)::int, coalesce((select max(cluster_no) from public.resident_clusters where month = p_month), 0));
+  sizes := array_fill(0, array[k]); ones := array_fill(0, array[k]);
+  for r in select c.cluster_no, x.own_dsp from public.resident_clusters c join public.residents x on x.id = c.resident_id where c.month = p_month loop
+    sizes[r.cluster_no] := sizes[r.cluster_no] + 1;
+    if r.own_dsp then ones[r.cluster_no] := ones[r.cluster_no] + 1; end if;
+  end loop;
+  -- residents who need their own DSP go first so they spread out; everyone else fills the smallest cluster
+  for r in select x.id, x.own_dsp from public.residents x
+           where x.active and not exists (select 1 from public.resident_clusters c where c.month = p_month and c.resident_id = x.id)
+           order by x.own_dsp desc, random() loop
+    best := 0;
+    for i in 1..k loop
+      if sizes[i] < 8 and (best = 0 or sizes[i] < sizes[best] or (sizes[i] = sizes[best] and r.own_dsp and ones[i] < ones[best])) then best := i; end if;
+    end loop;
+    if best = 0 then k := k + 1; sizes := sizes || 0; ones := ones || 0; best := k; end if;
+    insert into public.resident_clusters (month, resident_id, cluster_no) values (p_month, r.id, best);
+    sizes[best] := sizes[best] + 1;
+    if r.own_dsp then ones[best] := ones[best] + 1; end if;
+  end loop;
+  return k;
+end $$;
+
+-- make months after this one match it
+delete from public.resident_clusters where month > to_char(public.org_today(), 'YYYY-MM');
+select public.generate_clusters(to_char(public.org_today() + 31, 'YYYY-MM'), false);
