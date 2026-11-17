@@ -412,7 +412,7 @@ function previewBackend(cfg) {
     async removePush() { st.pushOn = false; done(); },
     async testPush() { return { preview: true }; },
     async hasAdmin() { return true; }, async claimAdmin() { return false; },
-    async signIn() {}, async signOut() {},
+    async signIn() {}, async signOut() {}, async accessToken() { return ""; },
     resetDemo() { st = seed(); done(); },
   };
 }
@@ -595,6 +595,7 @@ async function supabaseBackend(cfg) {
       if (error) throw friendlyError(error.message);
     },
     async signOut() { await sb.auth.signOut(); me = null; notify(); },
+    async accessToken() { const { data } = await sb.auth.getSession(); return data.session ? data.session.access_token : ""; },
     async hasAdmin() { const { data } = await sb.rpc("has_admin"); return !!data; },
     async claimAdmin() {
       const ok = await rpc("claim_first_admin");

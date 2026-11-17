@@ -29,6 +29,9 @@
     },
     "api/notify.js": {
       "includeFiles": "config.js"
+    },
+    "api/ask.js": {
+      "includeFiles": "{config.js,help.js}"
     }
   },
   "crons": [

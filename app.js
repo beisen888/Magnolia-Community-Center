@@ -1116,6 +1116,13 @@ document.addEventListener("submit", (ev) => {
   }
 });
 
+/* ---------- hooks for the Magnolia Helper chat (chat.js) ---------- */
+window.MagnoliaApp = {
+  me: () => { const e = myEmp(); return { name: (e && e.name) || "", isAdmin: isAdmin(), signedIn: !!(B && S.loaded && (B.mode === "preview" || S.me)) }; },
+  go: (tab, sub) => { if (tab === "hr" && !isAdmin()) return; S.tab = tab; if (sub) S.hrSub = sub; if (sub === "temps") S.tempFrom = TODAY; syncHash(); refresh(); window.scrollTo({ top: 0, behavior: "smooth" }); },
+  token: async () => (B && B.accessToken ? B.accessToken() : ""),
+};
+
 /* ---------- boot ---------- */
 const h0 = location.hash.slice(1);
 if (TABS.some((t) => t.id === h0)) S.tab = h0;
