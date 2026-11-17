@@ -35,7 +35,7 @@ function alertText(cfg, a) {
   return { title, body, lead };
 }
 
-// HR summary of unfilled spots in the next 48 hours (DSPs can no longer drop these, so what's open needs a temp)
+// HR summary of unfilled spots in the next 3 days (DSPs can no longer cancel these, so what's open needs a temp)
 function digestText(cfg, open) {
   const total = open.reduce((a, o) => a + (o.need - o.have), 0), groups = new Map();
   for (const o of open) {
@@ -117,23 +117,23 @@ module.exports = async (req, res) => {
     if (q.dry && !cronOk) return res.status(401).json({ error: "dry run needs Authorization: Bearer <CRON_SECRET>" });
     const due = (await rpc("dsp_due_alerts")) || [];
     const msgs = (await rpc("dsp_pending_messages")) || [];
-    // ---- once a day (7 AM Central by default): tell HR how many spots are still open in the next 48 hours ----
+    // ---- once a day (7 AM Central by default): tell HR how many spots are still open in the next 3 days ----
     const tz = cfg.timezone || "America/Chicago", nowTz = new Date();
     const today = nowTz.toLocaleDateString("en-CA", { timeZone: tz });
     const hour = +nowTz.toLocaleString("en-US", { timeZone: tz, hour: "numeric", hour12: false }) % 24;
     const digestDue = hour >= +(env.HR_DIGEST_HOUR || 7);
     const hrDigest = async (force) => {
       if (!force && !(digestDue && (await rpc("hr_digest_claim", { p_day: today })))) return null;
-      const d = digestText(cfg, (await rpc("dsp_open_slots", { p_hours: 48 })) || []);
+      const d = digestText(cfg, (await rpc("dsp_open_slots", { p_hours: 72 })) || []);
       if (!d.total) return { open: 0, pushed: 0, emailed: 0 };
       const hr = (await rpc("hr_contacts")) || [];
-      const title = `${d.total} open DSP spot${d.total === 1 ? "" : "s"} in the next 48 hours`;
+      const title = `${d.total} open DSP spot${d.total === 1 ? "" : "s"} in the next 3 days`;
       let p = 0, e = 0;
       if (vapid) p = await pushTo(await subsFor(hr.map((x) => x.user_id)), { title, body: "Tap to see how many temp DSPs are needed, by house and cluster.", url: "/#temps", tag: "hr-open" });
-      const text = `${title} (${d.hours} hours of coverage).\nThese shifts are inside the 48-hour window, so open spots need a temp or an HR assignment.\n\n` +
+      const text = `${title} (${d.hours} hours of coverage).\nThese shifts are inside the 3-day window, so open spots need a temp or an HR assignment.\n\n` +
         d.lines.map((l) => `${l.when} · ${l.what}${l.where ? "\n   " + l.where : ""}`).join("\n") + `\n\nSee it in the app: ${site}/#temps\n\n— ${cfg.orgName}`;
       const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#1F2A20;max-width:620px"><p style="font-family:Georgia,serif;font-size:24px;color:#29572D;margin:0 0 14px">Magnolia</p>
-        <p style="font-size:18px;margin:0 0 6px"><b>${esc(title)}</b></p><p style="margin:0 0 14px;color:#4A4E57">${d.hours} hours of coverage. These shifts are inside the 48-hour window, so open spots need a temp or an HR assignment.</p>
+        <p style="font-size:18px;margin:0 0 6px"><b>${esc(title)}</b></p><p style="margin:0 0 14px;color:#4A4E57">${d.hours} hours of coverage. These shifts are inside the 3-day window, so open spots need a temp or an HR assignment.</p>
         <table style="border-collapse:collapse;width:100%;font-size:14px">${d.lines.map((l) => `<tr><td style="padding:7px 10px 7px 0;border-top:1px solid #E5DFC8;vertical-align:top;white-space:nowrap">${esc(l.when)}</td><td style="padding:7px 0;border-top:1px solid #E5DFC8"><b>${esc(l.what)}</b>${l.where ? `<br><span style="color:#4A4E57;font-size:12.5px">${esc(l.where)}</span>` : ""}</td></tr>`).join("")}</table>
         <p style="margin-top:16px"><a href="${site}/#temps" style="background:#29572D;color:#fff;padding:10px 16px;border-radius:5px;text-decoration:none;font-weight:bold">Open Temps needed</a></p></div>`;
       for (const x of hr) if (await email(x.email, title, text, html)) e++;
@@ -143,7 +143,7 @@ module.exports = async (req, res) => {
       if (!cronOk) return res.status(401).json({ error: "needs Authorization: Bearer <CRON_SECRET>" });
       return res.status(200).json({ hrDigest: await hrDigest(true) });
     }
-    if (dry) return res.status(200).json({ push: !!vapid, email: !!env.RESEND_API_KEY, openNext48: digestText(cfg, (await rpc("dsp_open_slots", { p_hours: 48 })) || []).total, due: due.map((a) => ({ to: a.email, kind: a.kind, ...alertText(cfg, a) })), messages: msgs.map((m) => ({ to: m.email, title: m.title })) });
+    if (dry) return res.status(200).json({ push: !!vapid, email: !!env.RESEND_API_KEY, openNext3Days: digestText(cfg, (await rpc("dsp_open_slots", { p_hours: 72 })) || []).total, due: due.map((a) => ({ to: a.email, kind: a.kind, ...alertText(cfg, a) })), messages: msgs.map((m) => ({ to: m.email, title: m.title })) });
 
     // mark first so two overlapping runs can't double-send
     if (due.length) await rpc("dsp_mark_alerts", { p_ids: due.map((a) => a.signup_id), p_kinds: due.map((a) => a.kind) });

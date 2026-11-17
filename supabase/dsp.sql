@@ -1057,3 +1057,83 @@ end $$;
 -- make months after this one match it
 delete from public.resident_clusters where month > to_char(public.org_today(), 'YYYY-MM');
 select public.generate_clusters(to_char(public.org_today() + 31, 'YYYY-MM'), false);
+
+-- =====================================================================================
+-- v2.7: monthly sign-up windows by rank, 3-day cancel rule with a waitlist, licenses for outings. Safe to re-run.
+-- A month's schedule opens in the month before: Lead DSPs the 2nd week (weeks start Monday; week 1 holds the 1st),
+-- DSP IIs a week later, DSP Is a week after that. It closes the Sunday before that month's last week
+-- (the week holding its last day), but DSP Is always get at least a week. Same rule as signupWindow() in data.js.
+-- =====================================================================================
+create or replace function public.signup_window(p_date date)
+returns table (lead date, ii date, i date, closes date)
+language sql immutable as $$
+  with b as (
+    select (date_trunc('month', p_date) - interval '1 month')::date as first_prev,
+           (date_trunc('month', p_date) - interval '1 day')::date as last_prev
+  ), w as (
+    select date_trunc('week', first_prev)::date as wk1, date_trunc('week', last_prev)::date - 1 as close0 from b
+  )
+  select wk1 + 7, wk1 + 14, wk1 + 21, greatest(close0, wk1 + 27) from w
+$$;
+
+create or replace function public.pick_open(p_level text, p_date date) returns boolean
+language sql stable as $$
+  select public.org_today() between (case p_level when 'Lead DSP' then w.lead when 'DSP II' then w.ii else w.i end) and w.closes
+  from public.signup_window(p_date) w
+$$;
+create or replace function public.pick_opened(p_level text, p_date date) returns boolean
+language sql stable as $$
+  select public.org_today() >= (case p_level when 'Lead DSP' then w.lead when 'DSP II' then w.ii else w.i end)
+  from public.signup_window(p_date) w
+$$;
+grant execute on function public.signup_window(date), public.pick_open(text, date), public.pick_opened(text, date) to authenticated;
+
+-- DSPs take shifts only on their own teams, inside their rank's window, and outings only with a license
+drop policy if exists "take own shift" on public.dsp_signups;
+create policy "take own shift" on public.dsp_signups for insert to authenticated with check (
+  public.is_admin() or exists (
+    select 1 from public.employees e join public.teams t on t.id = team_id
+    where e.id = public.my_employee_id() and e.id = employee_id and e.active
+      and shift_date >= public.org_today()
+      and public.pick_open(e.level, shift_date)
+      and not public.week_locked(shift_date)
+      and team_id = any (e.teams)
+      and (not t.needs_license or e.has_license)
+  ));
+
+-- waitlists open with your window and stay open after sign-up closes
+drop policy if exists "join waitlist" on public.dsp_waitlist;
+create policy "join waitlist" on public.dsp_waitlist for insert to authenticated with check (
+  public.is_admin() or exists (
+    select 1 from public.employees e join public.teams t on t.id = team_id
+    where e.id = public.my_employee_id() and e.id = employee_id and e.active
+      and shift_date >= public.org_today()
+      and public.pick_opened(e.level, shift_date)
+      and team_id = any (e.teams)
+      and (not t.needs_license or e.has_license)
+  ));
+
+-- cancel only 3+ days ahead AND when someone is waiting to take it (the waitlist trigger hands it over); HR can always remove
+drop policy if exists "drop own shift" on public.dsp_signups;
+create policy "drop own shift" on public.dsp_signups for delete to authenticated using (
+  public.is_admin() or (
+    employee_id = public.my_employee_id()
+    and public.shift_starts_at(shift_date, block) > now() + interval '72 hours'
+    and exists (select 1 from public.dsp_waitlist w where w.shift_date = dsp_signups.shift_date and w.block = dsp_signups.block
+                and w.team_id = dsp_signups.team_id and w.home_id is not distinct from dsp_signups.home_id
+                and w.cluster_no is not distinct from dsp_signups.cluster_no)
+  ));
+
+-- emergency call-outs are for the last 3 days; earlier than that, cancel (with a waitlist) or swap
+create or replace function public.call_out_guard() returns trigger language plpgsql as $$ begin return new; end $$;
+do $$ declare src text; begin
+  select prosrc into src from pg_proc where proname = 'call_out';
+  if src is not null and position('72 hours' in src) = 0 then
+    execute replace(pg_get_functiondef('public.call_out(bigint, text)'::regprocedure),
+      'if public.shift_starts_at(s.shift_date, s.block) <= now() then raise exception ''That shift already started'' using errcode = ''P0001''; end if;',
+      'if public.shift_starts_at(s.shift_date, s.block) <= now() then raise exception ''That shift already started'' using errcode = ''P0001''; end if;
+  if not public.is_admin() and public.shift_starts_at(s.shift_date, s.block) > now() + interval ''72 hours'' then
+    raise exception ''More than 3 days out: cancel it (when someone is waiting) or offer it to a teammate'' using errcode = ''P0001''; end if;');
+  end if;
+end $$;
+drop function if exists public.call_out_guard();

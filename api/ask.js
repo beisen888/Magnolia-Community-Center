@@ -45,7 +45,7 @@ Never give medical, legal, or HR-policy advice, and never ask for or repeat pers
 If one part of the app is the place to go, end with a final line exactly like: [open: schedule] (use one value from the [open: …] tags in the facts).
 
 App facts:
-Shifts are 4-hour blocks: 12–4 AM, 4–8 AM, 8 AM–12 PM, 12–4 PM, 4–8 PM, 8 PM–12 AM; two in a row make 8 hours. DSPs pick up to 3 weeks ahead on their own teams. Teams: House & Daily Living (one house, 2 DSPs per house per shift, covers nights), On-Campus Activities, Community Outings (driver's license, one cluster), Learning & Community. 15 resident clusters of 8 or fewer, the same each month.
+Shifts are 4-hour blocks: 12–4 AM, 4–8 AM, 8 AM–12 PM, 12–4 PM, 4–8 PM, 8 PM–12 AM; two in a row make 8 hours. Each month's schedule opens in the month before by rank: Lead DSPs the 2nd week, DSP IIs a week later, DSP Is a week after that; sign-up closes the Sunday before that month's last week. Cancelling needs 3+ days' notice and someone on the waitlist; otherwise swap, or emergency call-out inside 3 days. Off-campus outings need a driver's license. Teams: House & Daily Living (one house, 2 DSPs per house per shift, covers nights), On-Campus Activities, Community Outings (driver's license, one cluster), Learning & Community. 15 resident clusters of 8 or fewer, the same each month.
 
 ${facts}`;
 

@@ -51,7 +51,22 @@ const sortedHomes = () => [...S.homes].sort((a, b) => a.sort - b.sort || a.id - 
 const myEmp = () => (S.me ? S.employees.find((e) => e.userId === S.me.userId) : null);
 const isAdmin = () => !!(S.me && S.me.isAdmin);
 const isLocked = (date) => (S.settings.lockedWeeks || []).includes(weekStart(date));
-const lastPickDay = () => addDays(weekStart(TODAY), 7 * (CFG.signupWeeksAhead + 1) - 1);
+/* monthly sign-up windows by rank (signupWindow / pickOpen live in data.js) */
+const levelOf = (emp) => (emp && emp.level) || "DSP I";
+const monthWord = (ds) => parse(ds.slice(0, 7) + "-01").toLocaleDateString("en-US", { month: "long" });
+const shortDay = (ds) => fmt(ds, { month: "short", day: "numeric" });
+/* the month whose sign-up is happening now (or comes next) */
+function activeSignupMonth() {
+  for (let k = 0; k < 3; k++) { const m = addMonth(monthKey(TODAY), k), w = signupWindow(m); if (TODAY <= w.close) return m; }
+  return addMonth(monthKey(TODAY), 1);
+}
+/* why someone can't pick on a date, in a few words (or "" when they can) */
+function windowNote(emp, date) {
+  const w = signupWindow(monthKey(date)), lv = levelOf(emp), opens = rankOpens(w, lv);
+  if (TODAY < opens) return `${monthWord(date)} sign-up opens for ${lv}s on ${shortDay(opens)}`;
+  if (TODAY > w.close) return `${monthWord(date)} sign-up closed ${shortDay(w.close)}`;
+  return "";
+}
 const someNames = (xs, n = 4) => xs.slice(0, n).map((e) => esc(e.name || "Unnamed")).join(", ") + (xs.length > n ? ` <span class="muted">+ ${xs.length - n} more</span>` : "");
 const leadOf = (emp) => emp && emp.level === "Lead DSP";
 const ctx = () => ({ homes: S.homes, residents: S.residents, clusters: S.clusters });
@@ -104,13 +119,15 @@ function openSpots(from, to) {
   return out;
 }
 const sumOpen = (xs) => xs.reduce((a, x) => a + x.open, 0);
-/* inside 48 hours DSPs can't drop any more, so whatever is open there needs a temp or an HR assignment */
-const openSoon = () => openSpots(TODAY, addDays(TODAY, 2)).filter((x) => shiftStart(x.date, x.block) - Date.now() <= DROP_HOURS * 36e5);
+/* inside 3 days DSPs can't cancel any more, so whatever is open there needs a temp or an HR assignment */
+const openSoon = () => openSpots(TODAY, addDays(TODAY, 3)).filter((x) => shiftStart(x.date, x.block) - Date.now() <= DROP_HOURS * 36e5);
 const extraMin = (s) => { const t = teamById(s.teamId), g = t && t.staffing === "cluster" && groupOf(s.date, s.clusterNo); return g && g.ones ? 30 : 0; };
 const shiftHours = (s) => 4 + extraMin(s) / 60;
 const placeOf = (s) => { const h = s.homeId != null && homeById(s.homeId); return h ? h.name : s.clusterNo != null ? `Cluster ${s.clusterNo}` : ""; };
 const startsAt = (s) => shiftStart(s.date, s.block);
-const canDrop = (s) => startsAt(s) - Date.now() > DROP_HOURS * 36e5;
+const farEnough = (s) => startsAt(s) - Date.now() > DROP_HOURS * 36e5;
+/* cancel = 3+ days before AND someone on the waitlist to take it (HR can always remove) */
+const canDrop = (s) => farEnough(s) && waitOf(s).length > 0;
 const empShifts = (empId, from, to) => S.signups.filter((s) => s.employeeId === empId && s.date >= from && s.date <= to).sort((a, b) => (a.date + a.block < b.date + b.block ? -1 : 1));
 const weekHours = (empId, ws) => empShifts(empId, ws, addDays(ws, 6)).reduce((a, s) => a + shiftHours(s), 0);
 const hrsTxt = (h) => (Math.round(h * 10) / 10).toString();
@@ -122,27 +139,31 @@ const offerOf = (signupId) => (S.offers || []).find((o) => o.signupId === signup
 const signupById = (id) => S.signups.find((x) => x.id === id);
 const slotText = (s) => { const t = teamById(s.teamId); return `${short(s.date)} · ${BLOCKS[s.block].label} · ${t ? t.shortName : ""}${placeOf(s) ? " · " + placeOf(s) : ""}`; };
 const canApprove = (emp, teamId) => isAdmin() || (leadOf(emp) && emp.teams.includes(teamId));
-/* what I can do with one of my own shifts: drop (48+ hours out), call out (inside 48 hours), or offer it to a teammate */
+/* what I can do with my own shift: cancel (3+ days out, someone waiting), call out (inside 3 days), or offer it to a teammate */
 function shiftBtns(s) {
   if (startsAt(s).getTime() <= Date.now()) return "";
   const o = offerOf(s.id);
   const swap = o ? `<span class="badge">${o.status === "claimed" ? "Swap waiting for approval" : "Offered to teammates"}</span><button class="linkbtn" data-act="canceloffer" data-id="${o.id}">Cancel offer</button>`
     : `<button class="linkbtn" data-act="offer" data-id="${s.id}">Offer to a teammate</button>`;
-  return (canDrop(s) ? `<button class="btn ghost sm" data-act="drop" data-id="${s.id}">Drop</button>` : `<button class="btn danger sm" data-act="callout" data-id="${s.id}">Call out</button>`) + swap;
+  const first = canDrop(s) ? `<button class="btn ghost sm" data-act="drop" data-id="${s.id}">Cancel</button>`
+    : farEnough(s) ? `<span class="muted tiny" title="You can cancel 3+ days ahead once someone is on the waitlist">Cancel opens when someone's on the waitlist</span>`
+    : `<button class="btn danger sm" data-act="callout" data-id="${s.id}">Emergency call-out</button>`;
+  return first + swap;
 }
 function basicOk(emp, date, block, team) {
   if (!emp || !team || !emp.teams.includes(team.id) || offOn(emp.id, date)) return false;
-  if (date < TODAY || date > lastPickDay()) return false;
+  if (team.needsLicense && !emp.hasLicense) return false;
+  if (date < TODAY) return false;
   if (date === TODAY && BLOCKS[block].start <= NOW.getHours()) return false;
   return true;
 }
 function canTake(emp, sl, team) {
-  if (!basicOk(emp, sl.date, sl.block, team) || isLocked(sl.date) || busyAt(emp, sl.date, sl.block)) return false;
+  if (!basicOk(emp, sl.date, sl.block, team) || !pickOpen(levelOf(emp), sl.date, TODAY) || isLocked(sl.date) || busyAt(emp, sl.date, sl.block)) return false;
   const need = sl.need ?? slotNeed(team, sl.date, sl.block, sl.homeId ?? null, sl.clusterNo ?? null, ctx());
   return need > 0 && taken(sl) < need;
 }
 function canWait(emp, sl, team) {
-  if (!basicOk(emp, sl.date, sl.block, team) || busyAt(emp, sl.date, sl.block) || myWait(emp, sl)) return false;
+  if (!basicOk(emp, sl.date, sl.block, team) || !pickOpened(levelOf(emp), sl.date, TODAY) || busyAt(emp, sl.date, sl.block) || myWait(emp, sl)) return false;
   const need = sl.need ?? slotNeed(team, sl.date, sl.block, sl.homeId ?? null, sl.clusterNo ?? null, ctx());
   return need > 0 && taken(sl) >= need && waitOf(sl).length < WAITLIST_MAX;
 }
@@ -312,7 +333,7 @@ function renderNotice() {
   if (S.noAdmin && S.me && !S.me.isAdmin) h += `<p class="notice info">This schedule has no HR admin yet. If you run it, <button class="btn sm" data-act="claim">Claim admin</button></p>`;
   if (isAdmin() && S.loaded && !(S.tab === "hr" && S.hrSub === "temps")) {
     const n = sumOpen(openSoon());
-    if (n) h += `<p class="notice info hrnote"><span><b>HR: ${plural(n, "spot")} still open in the next 48 hours.</b> DSPs can't drop these any more, so they need a temp or an assignment.</span> <button class="btn sm" data-act="gotemps">See temps needed</button></p>`;
+    if (n) h += `<p class="notice info hrnote"><span><b>HR: ${plural(n, "spot")} still open in the next 3 days.</b> DSPs can't cancel these any more, so they need a temp or an assignment.</span> <button class="btn sm" data-act="gotemps">See temps needed</button></p>`;
   }
   $("notice").innerHTML = h;
 }
@@ -363,7 +384,7 @@ function viewHome() {
       return `<button class="d7${d === TODAY ? " today" : ""}" data-act="openday" data-date="${d}"><span class="dn">${fmt(d, { weekday: "short" })} ${parse(d).getDate()}</span>${ss.length ? ss.map((s) => { const t = teamById(s.teamId), p = placeOf(s); return `<span class="bar ${teamClass(t)}" title="${esc(t ? t.shortName : "")}${p ? " · " + esc(p) : ""}">${hShort(BLOCKS[s.block].start)}–${hShort(BLOCKS[s.block].end)}${p ? `<em>${esc(p.replace(/^Home\s*/i, "H").replace(/^Cluster\s*/i, "C"))}</em>` : ""}</span>`; }).join("") : `<span class="off">Off</span>`}</button>`; }).join("")}</div></section>`;
   h += fillWeek(emp, ws, we, hours, target);
   h += `</div><div class="stack">`;
-  h += nextShift(emp) + swapsCard(emp) + waitCard(emp) + myTeamCard(emp, ws, we) + cycleCard() + profileCard(emp);
+  h += nextShift(emp) + swapsCard(emp) + waitCard(emp) + myTeamCard(emp, ws, we) + cycleCard(emp) + profileCard(emp);
   h += `</div></div>`;
   return h;
 }
@@ -371,13 +392,13 @@ let selSeq = 0;
 function fillWeek(emp, ws, we, hours, target) {
   if (!emp.teams.length) return "";
   const list = openForMe(emp, ws, we);
-  return fillWeekHtml(emp, list, hours, target);
+  return fillWeekHtml(emp, list, hours, target, ws);
 }
 /* open shifts on my teams between two dates, with the house/cluster I'd most likely want */
 function openForMe(emp, ws, we) {
   const from = ws > TODAY ? ws : TODAY, list = [];
   for (let d = from; d <= we && list.length < 60; d = addDays(d, 1)) for (let b = 0; b < 6; b++) for (const tid of emp.teams) {
-    const t = teamById(tid); if (!t || !basicOk(emp, d, b, t) || isLocked(d) || busyAt(emp, d, b)) continue;
+    const t = teamById(tid); if (!t || !basicOk(emp, d, b, t) || !pickOpen(levelOf(emp), d, TODAY) || isLocked(d) || busyAt(emp, d, b)) continue;
     const open = units(t, d, b).filter((u) => taken(u) < u.need);
     if (!open.length) continue;
     let pick = open[0];
@@ -399,9 +420,9 @@ function fillPlan(emp, list, hours, target) {
   }
   return plan;
 }
-function fillWeekHtml(emp, list, hours, target) {
+function fillWeekHtml(emp, list, hours, target, ws) {
   const title = hours >= target ? "Want extra hours?" : `Fill your week · ${hrsTxt(target - hours)} hrs to go`;
-  if (!list.length) return `<section class="card"><div class="sec-title"><h3>${title}</h3></div><p class="muted" style="margin:0">No open shifts on your teams for the rest of this week. Try next week, or join a waitlist on the Schedule tab.</p></section>`;
+  if (!list.length) return `<section class="card"><div class="sec-title"><h3>${title}</h3></div><p class="muted" style="margin:0">${windowNote(emp, ws > TODAY ? ws : TODAY) ? esc(windowNote(emp, ws > TODAY ? ws : TODAY)) + ". " : "No open shifts on your teams this week. "}Check the sign-up calendar, or join a waitlist on Schedule.</p></section>`;
   const rows = list.slice(0, 8);
   return `<section class="card"><div class="sec-title"><h3>${title}</h3><span>${hours < target ? `<button class="btn sm gold" data-act="autofill">★ Fill my week for me</button> ` : ""}<button class="linkbtn" data-act="tab" data-tab="schedule">Full schedule</button></span></div><div class="openlist">${rows.map((x) => {
     const multi = x.t.staffing !== "fixed" && x.pick.label, id = "u" + ++selSeq;
@@ -477,15 +498,21 @@ function nextShift(emp) {
     <div class="when">${short(s.date)} · ${timeRange(s, pair)}</div>
     <div class="muted" style="font-size:14px">${esc(t ? t.name : "")}${place ? ` · <b style="color:var(--ink)">${esc(place)}</b>` : ""}${pair ? " · 8-hour day" : ""}${extraMin(s) ? " · runs ~30 min longer" : ""}</div>
     ${t ? rotationHtml(t, s) : ""}
-    <div class="rowact" style="justify-content:flex-start;align-items:center;margin:12px 0 0"><span class="muted tiny">Can't make it?</span>${shiftBtns(s)}</div></section>`;
+    ${shiftBtns(s) ? `<div class="rowact" style="justify-content:flex-start;align-items:center;margin:12px 0 0"><span class="muted tiny">Can't make it?</span>${shiftBtns(s)}</div>` : ""}</section>`;
 }
-function cycleCard() {
-  const thisW = weekStart(TODAY), nextW = addDays(thisW, 7), last = lastPickDay();
-  const msg = isLocked(nextW)
-    ? `<b>Next week's schedule is final</b> and was emailed to you. Pick shifts through ${fmt(last, { month: "short", day: "numeric" })}.`
-    : `<b>Pick your shifts through ${fmt(last, { month: "short", day: "numeric" })}.</b> HR emails the final schedule for each week before it starts.`;
-  return `<section class="card"><span class="eyebrow">How scheduling works</span><p style="margin:6px 0 0;font-size:15px">${msg}</p>
-    <p class="muted note">You can drop a shift until 48 hours before it starts; the next person on the waitlist gets it.</p></section>`;
+/* the sign-up calendar for the month being scheduled: Lead DSPs → DSP IIs → DSP Is → closes */
+function windowTimeline(month, me) {
+  const w = signupWindow(month), steps = [["Lead DSPs", w.lead, "Lead DSP"], ["DSP IIs", w.ii, "DSP II"], ["DSP Is", w.i, "DSP I"], ["Sign-up closes", w.close, null]];
+  const now = steps.filter((x) => TODAY >= x[1]).length;   // how many steps have started
+  return `<ol class="wline">${steps.map(([lab, d, lv], k) => `<li class="${k < now ? "done" : ""}${k === now - 1 ? " now" : ""}${me && lv === me ? " mine" : ""}"><i></i><b>${lab}</b><span>${k === 3 ? "end of " : ""}${shortDay(d)}</span>${me && lv === me ? `<em>You</em>` : ""}</li>`).join("")}</ol>`;
+}
+function cycleCard(emp) {
+  const m = activeSignupMonth(), w = signupWindow(m), lv = levelOf(emp), opens = rankOpens(w, lv);
+  const msg = TODAY < opens ? `<b>${monthWord(m + "-01")} sign-up opens for you on ${long(opens)}.</b> Lead DSPs pick first, then DSP IIs, then DSP Is.`
+    : TODAY <= w.close ? `<b>${monthWord(m + "-01")} sign-up is open for you until ${long(w.close)}.</b> After that, HR fills any gaps.`
+    : `<b>${monthWord(m + "-01")} sign-up has closed.</b>`;
+  return `<section class="card"><span class="eyebrow">Sign-up calendar · ${monthName(m)}</span><p style="margin:6px 0 10px;font-size:15px">${msg}</p>${windowTimeline(m, lv)}
+    <p class="muted note">Need to cancel? Only 3 or more days ahead, and only when someone is on the waitlist. Otherwise offer it to a teammate.</p></section>`;
 }
 function alertsBlock() {
   const P = S.push;
@@ -524,7 +551,7 @@ function viewSchedule() {
   return `<div class="grid2"><div><div class="calhead"><button class="iconbtn" data-act="month" data-d="-1" aria-label="Previous month">‹</button><h2>${monthName(mk)}</h2><button class="iconbtn" data-act="month" data-d="1" aria-label="Next month">›</button>
 </div>
     <div class="dow">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((x) => `<div>${x}</div>`).join("")}</div><div class="cal">${cal}</div>
-    <p class="muted" style="font-size:13px;margin-top:10px">Colored tags are your shifts (H = house, C = outing cluster). The bar under each day shows staffing (orange = short). You can pick shifts through ${fmt(lastPickDay(), { month: "short", day: "numeric" })}.</p></div>
+    <p class="muted" style="font-size:13px;margin-top:10px">Colored tags are your shifts (H = house, C = outing cluster). The bar under each day shows staffing (orange = short). ${emp ? esc(windowNote(emp, activeSignupMonth() + "-01") || `${monthWord(activeSignupMonth() + "-01")} sign-up is open for you until ${shortDay(signupWindow(activeSignupMonth()).close)}`) + "." : ""}</p></div>
     <aside class="card day" id="day">${dayPanel(emp)}</aside></div>`;
 }
 /* buttons for one slot: take / drop / waitlist / why not */
@@ -540,6 +567,8 @@ function slotActs(emp, u, t, hr) {
   else if (canWait(emp, u, t)) a = `<button class="btn quiet sm" data-act="wait" ${data}>Join waitlist${waitOf(u).length ? ` · ${waitOf(u).length} ahead` : ""}</button>`;
   else if (busy && !past) { const bt = teamById(busy.teamId); a = `<span class="muted tiny">You're on ${esc(bt ? bt.shortName : "another shift")}${placeOf(busy) ? " · " + esc(placeOf(busy)) : ""}</span>`; }
   else if (emp && !emp.teams.includes(t.id)) a = `<span class="muted tiny">Not your team</span>`;
+  else if (emp && t.needsLicense && !emp.hasLicense && !past) a = `<span class="muted tiny">Needs a driver's license</span>`;
+  else if (emp && !past && taken(u) < u.need && windowNote(emp, u.date)) a = `<span class="muted tiny">${esc(windowNote(emp, u.date))}</span>`;
   else if (!past && taken(u) >= u.need && waitOf(u).length >= WAITLIST_MAX) a = `<span class="muted tiny">Full · waitlist full</span>`;
   if (hr && taken(u) < u.need && !past) {
     const free = S.employees.filter((e) => e.active !== false && e.teams.includes(t.id) && !busyAt(e, u.date, u.block) && !offOn(e.id, u.date));
@@ -558,7 +587,7 @@ function dayPanel(emp) {
   const ds = S.sel, past = ds < TODAY, locked = isLocked(ds);
   const hr = isAdmin() && S.hrTools;
   const teams = activeTeams().filter((t) => hr || !S.myTeamsOnly || !emp || emp.teams.includes(t.id));
-  let h = `<div class="sec-title"><div><h2>${long(ds)}</h2><span class="muted" style="font-size:13px">${past ? "Past day · view only" : locked ? "Final schedule (published). Full shifts still take waitlists." : ds > lastPickDay() ? "Not open for sign-up yet" : "Tap 4 hrs for one block, 8 hrs for two in a row"}</span></div>
+  let h = `<div class="sec-title"><div><h2>${long(ds)}</h2><span class="muted" style="font-size:13px">${past ? "Past day · view only" : locked ? "Final schedule (published). Full shifts still take waitlists." : emp && !S.hrTools && windowNote(emp, ds) ? esc(windowNote(emp, ds)) + ". Waitlists stay open." : "Tap 4 hrs for one block, 8 hrs for two in a row"}</span></div>
     <span class="checks">${emp && !hr ? `<label><input type="checkbox" data-act="myonly" ${S.myTeamsOnly ? "checked" : ""}> My teams only</label>` : ""}${isAdmin() ? `<label><input type="checkbox" data-act="hrtools" ${S.hrTools ? "checked" : ""}> HR tools</label>` : ""}</span></div>`;
   if (!teams.length) return h + `<div class="empty">You're not on a team yet. <button class="linkbtn" data-act="tab" data-tab="quiz">Find your team</button></div>`;
   for (let b = 0; b < 6; b++) {
@@ -649,7 +678,7 @@ function roster(t) {
 const QUIZ = [
   { q: "Pick your ideal afternoon at work.", a: [["Cooking a great meal and getting a home in order", "house"], ["Gardening, shooting hoops or doing crafts outside", "campus"], ["A trip to the mall or the bowling alley", "outings"], ["Reading together or a music session", "learning"]] },
   { q: "You feel your best when you're…", a: [["Keeping a steady routine and taking care of a home", "house"], ["Up and moving, active all day", "campus"], ["Out in the community, meeting people", "outings"], ["Teaching and helping someone learn something new", "learning"]] },
-  { q: "How do you feel about driving residents around town?", a: [["I'd rather not drive", "house,campus,learning"], ["Happy to, and I have a license", "outings"], ["Sometimes is fine", "campus,outings"]] },
+  { q: "Do you have a valid driver's license? Every off-campus outing cluster needs a DSP who can drive.", a: [["Yes, and I'm happy to drive residents", "outings"], ["Yes, but I'd rather not drive", "house,campus,learning"], ["No, I don't have a license", "house,campus,learning"]] },
   { q: "Which hours fit your life best?", a: [["Nights or early mornings work for me", "house"], ["Daytime, 8 AM to 8 PM", "campus,outings,learning"], ["Flexible, whatever's needed", "house,outings"]] },
   { q: "Your biggest strength?", a: [["Organized and patient", "house"], ["Energetic and sporty", "campus"], ["Outgoing and social", "outings"], ["Calm and creative", "learning"]] },
   { q: "Which moment would make your day?", a: [["Helping someone get ready for their job at Ochsner", "house"], ["Seeing someone hit a new fitness goal", "campus"], ["Watching someone light up at a community event", "outings"], ["Hearing someone read a whole page on their own", "learning"]] },
@@ -668,13 +697,14 @@ function viewQuiz() {
       ${Q.i ? `<div class="rowact" style="justify-content:flex-start"><button class="linkbtn" data-act="qback">Back</button></div>` : ""}</div>`;
   }
   const sc = quizScores(Q.answers), max = Math.max(1, ...Object.values(sc));
-  const ranked = activeTeams().filter((t) => sc[t.key] != null || ["house", "campus", "outings", "learning"].includes(t.key)).map((t) => ({ t, v: sc[t.key] || 0 })).sort((a, b) => b.v - a.v);
+  const noLicense = Q.answers[2] === 2;   // can't drive: off-campus teams are out
+  const ranked = activeTeams().filter((t) => sc[t.key] != null || ["house", "campus", "outings", "learning"].includes(t.key))
+    .map((t) => ({ t, v: noLicense && t.needsLicense ? 0 : sc[t.key] || 0, off: noLicense && t.needsLicense })).sort((a, b) => b.v - a.v);
   const top = ranked[0], second = ranked[1];
-  const noLicense = Q.answers[2] === 0;
   return `<div class="card quiz"><span class="eyebrow">Your match</span><div class="qprog"><span style="width:100%"></span></div>
     <h2>You'd thrive on ${esc(top.t.name)}</h2><p class="muted" style="margin:0">${esc(top.t.description)}</p>
-    <div class="scores">${ranked.map((r) => `<div class="score ${teamClass(r.t)}"><span>${esc(r.t.shortName)}</span><span class="b"><span style="width:${(r.v / max) * 100}%"></span></span><span class="mono" style="font-size:12px">${Math.round((r.v / QUIZ.length) * 100)}%</span></div>`).join("")}</div>
-    ${noLicense && top.t.needsLicense ? `<p class="notice">This team needs a driver's license. You said you'd rather not drive, so consider your second match.</p>` : ""}
+    <div class="scores">${ranked.map((r) => `<div class="score ${teamClass(r.t)}"><span>${esc(r.t.shortName)}</span><span class="b"><span style="width:${(r.v / max) * 100}%"></span></span><span class="mono" style="font-size:12px">${r.off ? "needs license" : Math.round((r.v / QUIZ.length) * 100) + "%"}</span></div>`).join("")}</div>
+    ${noLicense ? `<p class="notice">Community Outings take clusters off campus, so they need a driver's license. Once you have one, tick <b>I have a driver's license</b> in My profile and join from Teams &amp; clusters.</p>` : ""}
     <div class="rowact" style="justify-content:flex-start">${emp ? `<button class="btn lg" data-act="quizjoin" data-teams="${top.t.id}">Join ${esc(top.t.shortName)}</button>${second && second.v > 0 ? `<button class="btn ghost lg" data-act="quizjoin" data-teams="${top.t.id},${second.t.id}">Join ${esc(top.t.shortName)} + ${esc(second.t.shortName)}</button>` : ""}` : ""}<button class="linkbtn" data-act="qreset">Retake</button></div>
     <p class="muted" style="font-size:12.5px;margin:12px 0 0">You can change teams anytime on the Teams tab. HR may adjust teams to keep every home covered.</p></div>`;
 }
@@ -701,7 +731,8 @@ function hrCoverage() {
   const waiting = S.waitlist.filter((w) => w.date >= ws && w.date <= addDays(ws, 6)).length;
   const pub = isLocked(ws);
   let h = `<div class="sec-title"><h2>Coverage</h2>${hrWeekNav()}</div>
-    <div class="card publish${pub ? " done" : ""}"><div><b>${pub ? "Published" : "Not published yet"}</b><span class="muted"> · week of ${fmt(ws, { month: "short", day: "numeric" })}</span><div class="muted" style="font-size:14px">${pub ? "No new picks this week. DSPs can still drop until 48 hours before a shift; the waitlist fills the gap." : "When coverage looks right, publish to lock the week and email every DSP their final schedule."}</div></div>
+    <div class="card win"><div class="sec-title" style="margin-bottom:8px"><h3>${monthName(activeSignupMonth())} sign-up</h3><span class="muted" style="font-size:13px">${TODAY > signupWindow(activeSignupMonth()).close ? "Closed: fill the gaps on Temps needed" : "Closes " + long(signupWindow(activeSignupMonth()).close)}</span></div>${windowTimeline(activeSignupMonth(), null)}</div>
+    <div class="card publish${pub ? " done" : ""}"><div><b>${pub ? "Published" : "Not published yet"}</b><span class="muted"> · week of ${fmt(ws, { month: "short", day: "numeric" })}</span><div class="muted" style="font-size:14px">${pub ? "No new picks this week. DSPs can still cancel 3+ days ahead when someone is on the waitlist, swap, or call out." : "When coverage looks right, publish to lock the week and email every DSP their final schedule."}</div></div>
     ${pub ? `<button class="btn quiet" data-act="unpublish" data-w="${ws}">Reopen week</button>` : `<button class="btn lg" data-act="publish" data-w="${ws}">Publish &amp; email schedule</button>`}</div><div class="cards">
     <div class="card kpi"><div class="v">${need ? Math.round((have / need) * 100) : 0}%</div><div class="k">of needed shifts filled (${have}/${need})</div></div>
     <div class="card kpi${need - have ? " warn" : ""}"><div class="v">${need - have}</div><div class="k">open DSP slots this week${waiting ? ` · ${waiting} on waitlists` : ""}</div></div>
@@ -733,11 +764,11 @@ function hrTemps() {
   const sel = days.includes(S.tempDay) ? S.tempDay : days.find((d) => dayTot(d)) || days[0];
   const max = Math.max(1, ...Object.values(by));
   let h = `<div class="sec-title"><h2>Temps needed</h2>${nav}</div>
-    <p class="muted" style="margin:-4px 0 14px;font-size:13.5px">Every spot a DSP hasn't taken. Inside 48 hours DSPs can't drop, so those numbers are firm. When the agency confirms a temp, tap the house or cluster to mark it <b>booked</b>: the spot stops counting as open and the temp hours are logged. HR also gets this list as an email and phone alert every morning.</p>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13.5px">Every spot a DSP hasn't taken. Inside 3 days DSPs can't cancel, so those numbers are firm. When the agency confirms a temp, tap the house or cluster to mark it <b>booked</b>: the spot stops counting as open and the temp hours are logged. HR also gets this list as an email and phone alert every morning.</p>
     <div class="cards">
-    <div class="card kpi${nSoon ? " warn" : ""}"><div class="v">${nSoon}</div><div class="k">temp shifts needed in the next 48 hours (${nSoon * 4} hrs)</div></div>
+    <div class="card kpi${nSoon ? " warn" : ""}"><div class="v">${nSoon}</div><div class="k">temp shifts needed in the next 3 days (${nSoon * 4} hrs)</div></div>
     <div class="card kpi"><div class="v">${nAll}</div><div class="k">open spots in these 7 days (${nAll * 4} hrs) · later days may still fill</div></div>
-    <div class="card kpi"><div class="v">${new Set(soon.filter((x) => x.homeId != null).map((x) => x.homeId)).size}</div><div class="k">houses short in the next 48 hours</div></div>
+    <div class="card kpi"><div class="v">${new Set(soon.filter((x) => x.homeId != null).map((x) => x.homeId)).size}</div><div class="k">houses short in the next 3 daurs</div></div>
     <div class="card kpi good"><div class="v">${booked.reduce((a, x) => a + x.count, 0)}</div><div class="k">temp shifts booked in these 7 days (${booked.reduce((a, x) => a + x.count, 0) * 4} hrs)</div></div></div>`;
   h += `<div class="card tw"><table class="covgrid temps"><thead><tr><th>Block</th>${days.map((d) => `<th><button class="daybtn" data-act="tempday" data-date="${d}" aria-pressed="${d === sel}">${fmt(d, { weekday: "short", month: "numeric", day: "numeric" })}</button></th>`).join("")}</tr></thead><tbody>`;
   for (let b = 0; b < 6; b++) h += `<tr><th>${BLOCKS[b].label}</th>${days.map((d) => { const n = by[`${d}|${b}`] || 0, gone = shiftStart(d, b).getTime() <= Date.now();
@@ -886,8 +917,9 @@ function hrSettings() {
         <ol class="steps"><li>Vercel → your project → <b>Settings → Environment Variables</b> → add <b>VAPID_PRIVATE_KEY</b> and paste it.</li><li><b>Deployments → ⋯ → Redeploy</b>.</li><li>In Supabase → SQL editor, run <b>supabase/alerts-cron.sql</b> once (the 10-minute timer).</li></ol>
         <button class="linkbtn" data-act="privdone">I've saved it</button></div>`
         : `<button class="btn ${key ? "quiet" : ""}" data-act="vapid">${key ? "Replace alert keys" : "Create alert keys"}</button>${key ? `<p class="muted note">Replacing keys means everyone has to turn alerts on again.</p>` : ""}`}</section>
-    <section class="card"><span class="eyebrow">Unfilled shift alerts</span><p style="margin:6px 0 0;font-size:15px">Every morning at 7 AM, everyone with HR access gets an email (and a phone alert, if they turned alerts on) listing the spots still open in the next 48 hours, by house and cluster. The live numbers are always under <button class="linkbtn" data-act="hrsub" data-sub="temps">Temps needed</button>.</p></section>
-    <section class="card"><span class="eyebrow">Publishing</span><p style="margin:6px 0 0;font-size:15px">Publish each week from <button class="linkbtn" data-act="hrsub" data-sub="coverage">Coverage</button>. DSPs can pick shifts up to ${CFG.signupWeeksAhead} weeks ahead and drop until 48 hours before a shift. Publishing locks new picks and emails every DSP their final schedule.</p></section>
+    <section class="card"><span class="eyebrow">Unfilled shift alerts</span><p style="margin:6px 0 0;font-size:15px">Every morning at 7 AM, everyone with HR access gets an email (and a phone alert, if they turned alerts on) listing the spots still open in the next 3 days, by house and cluster. The live numbers are always under <button class="linkbtn" data-act="hrsub" data-sub="temps">Temps needed</button>.</p></section>
+    <section class="card"><span class="eyebrow">Sign-up calendar · ${monthName(activeSignupMonth())}</span><p style="margin:6px 0 10px;font-size:15px">Each month's schedule opens in the month before by rank: Lead DSPs the 2nd week, DSP IIs a week later, DSP Is a week after that. Sign-up closes the Sunday before the last week, so HR has that week to fill gaps. HR can assign anyone at any time.</p>${windowTimeline(activeSignupMonth(), null)}</section>
+    <section class="card"><span class="eyebrow">Publishing</span><p style="margin:6px 0 0;font-size:15px">Publish each week from <button class="linkbtn" data-act="hrsub" data-sub="coverage">Coverage</button>. DSPs can cancel only 3 or more days ahead, and only when someone is on the waitlist. Publishing locks new picks and emails every DSP their final schedule.</p></section>
     <section class="card"><span class="eyebrow">Demo data</span><p style="margin:6px 0 12px;font-size:14px">${demo} demo DSPs (Sally Thompson and team), ${S.residents.filter((r) => r.demo).length} demo residents and their shifts are loaded for presentations.</p>
       ${demo || S.residents.some((r) => r.demo) ? `<button class="btn danger" data-act="wipedemo">Remove demo data</button>` : ""}${B.mode === "preview" ? ` <button class="btn quiet" data-act="resetdemo">Reset preview</button>` : ""}</section></div>`;
 }
@@ -952,7 +984,7 @@ const actions = {
   remove: (d) => { if (confirm(`Remove ${d.name} from this shift?`)) act(() => B.drop(+d.id, true), `Removed ${d.name}.`); },
   join: (d) => {
     const emp = myEmp(), t = teamById(+d.team);
-    if (t.needsLicense && !emp.hasLicense && !confirm(`${t.name} needs a driver's license. Join anyway and tell HR you'll have one?`)) return;
+    if (t.needsLicense && !emp.hasLicense) return toast("Off-campus outings need a driver's license. Tick \"I have a driver's license\" in My profile first.");
     act(() => B.updateMe({ teams: [...new Set([...emp.teams, t.id])] }), `You joined ${t.shortName}.`);
   },
   leave: (d) => { const emp = myEmp(); act(() => B.updateMe({ teams: emp.teams.filter((x) => x !== +d.team) }), "Left the team."); },
@@ -962,7 +994,8 @@ const actions = {
   quizjoin: (d) => {
     const emp = myEmp(), ids = d.teams.split(",").map(Number);
     const patch = { teams: [...new Set([...emp.teams, ...ids])], quizTeam: ids[0] };
-    if (S.quiz.answers[2] === 1) patch.hasLicense = true;
+    if (S.quiz.answers[2] === 0 || S.quiz.answers[2] === 1) patch.hasLicense = true;
+    if (S.quiz.answers[2] === 2) { patch.hasLicense = false; patch.teams = patch.teams.filter((id) => { const t = teamById(id); return !(t && t.needsLicense); }); }
     act(() => B.updateMe(patch), "Team saved. Your matching shifts are on the My week tab.").then(() => { S.tab = "home"; syncHash(); render(); });
   },
   myonly: () => { S.myTeamsOnly = !S.myTeamsOnly; render(); },
@@ -1049,7 +1082,7 @@ const actions = {
   tempday2: (d) => { S.hrTools = true; goDay(d.date); },
   tempcsv: () => {
     const ws = S.tempFrom, q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-    const rows = [["Date", "Day", "Block", "Team", "House / cluster", "DSPs signed up", "DSPs needed", "Temps needed", "Hours", "Inside 48 hours"].map(q).join(",")];
+    const rows = [["Date", "Day", "Block", "Team", "House / cluster", "DSPs signed up", "DSPs needed", "Temps needed", "Hours", "Inside 3 days"].map(q).join(",")];
     for (const x of openSpots(ws, addDays(ws, 6))) rows.push([x.date, fmt(x.date, { weekday: "long" }), BLOCKS[x.block].label, x.team.name, x.label, inSlot(x).length, x.need, x.open, x.open * 4,
       shiftStart(x.date, x.block) - Date.now() <= DROP_HOURS * 36e5 ? "yes" : "no"].map(q).join(","));
     if (rows.length === 1) return toast("Nothing open in these 7 days.");

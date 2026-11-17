@@ -18,7 +18,27 @@
  *   settings:  { announcement, lockedWeeks[], vapidPublic }
  */
 const SUPABASE_CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
-const WAITLIST_MAX = 10, CLUSTER_MAX = 8, DROP_HOURS = 48;
+const WAITLIST_MAX = 10, CLUSTER_MAX = 8, DROP_HOURS = 72;   // cancel only 3+ days ahead, and only with someone waiting
+
+/* ---------- monthly sign-up windows, by rank (same rule as signup_window() in the database) ----------
+ * A month's schedule opens in the month before: Lead DSPs the 2nd week, DSP IIs a week later, DSP Is a week after that.
+ * Weeks start Monday; week 1 is the week holding the 1st. Sign-up closes the Sunday before the last week of that
+ * month before (the week holding its last day), so HR has that week to fill gaps. DSP Is always get at least a week. */
+const RANKS = ["Lead DSP", "DSP II", "DSP I"];
+function signupWindow(month) {   // month "YYYY-MM" being scheduled → ISO dates
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(y, m - 2, 1), last = new Date(y, m - 1, 0);
+  const mon = (d) => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  const plus = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+  const wk1 = mon(first), lead = plus(wk1, 7), ii = plus(wk1, 14), i = plus(wk1, 21);
+  let close = plus(mon(last), -1); if (close < plus(i, 6)) close = plus(i, 6);
+  return { month, lead: isoDate(lead), ii: isoDate(ii), i: isoDate(i), close: isoDate(close) };
+}
+const rankOpens = (w, level) => (level === "Lead DSP" ? w.lead : level === "DSP II" ? w.ii : w.i);
+/* can someone at this level pick shifts on this date, today? */
+function pickOpen(level, date, today) { const w = signupWindow(date.slice(0, 7)); return today >= rankOpens(w, level) && today <= w.close; }
+/* has this level's window for that month opened (waitlists stay open after sign-up closes) */
+function pickOpened(level, date, today) { return today >= rankOpens(signupWindow(date.slice(0, 7)), level); }
 
 /* ---------------- staffing rules (shared by both backends and the UI) ---------------- */
 const DAY0 = Date.UTC(2000, 0, 3);
@@ -262,8 +282,10 @@ function previewBackend(cfg) {
   const needOf = (sl) => slotNeed(teamOf(sl.teamId), sl.date, sl.block, sl.homeId ?? null, sl.clusterNo ?? null, ctx());
   const tempsIn = (sl) => (st.temps || []).filter((x) => sameSlot(x, sl)).reduce((a, x) => a + x.count, 0);
   const takenIn = (sl) => st.signups.filter((s) => sameSlot(s, sl)).length + tempsIn(sl);
-  const checkTake = (sl) => {
-    const t = teamOf(sl.teamId), n = needOf(sl);
+  const checkTake = (sl, asHr) => {
+    const t = teamOf(sl.teamId), n = needOf(sl), e = st.employees.find((x) => x.id === sl.employeeId);
+    if (!asHr && e && !pickOpen(e.level, sl.date, isoDate(new Date()))) throw friendlyError(`Sign-up for ${new Date(sl.date + "T12:00").toLocaleDateString("en-US", { month: "long" })} isn't open for ${e.level}s right now.`);
+    if (t.needsLicense && e && !e.hasLicense) throw friendlyError("Off-campus outings need a driver's license.");
     if (n === 0) throw friendlyError("That team doesn't work this block.");
     if (n < 0) throw friendlyError(t.staffing === "home" ? "Pick which house you're working." : t.staffing === "cluster" ? "Pick which outing cluster you're working." : "That slot doesn't exist.");
     if (st.signups.some((s) => s.employeeId === sl.employeeId && s.date === sl.date && s.block === sl.block)) throw friendlyError("You already have a shift at that time.");
@@ -294,14 +316,15 @@ function previewBackend(cfg) {
     },
     async take(slot, employeeId) {
       const sl = { homeId: null, clusterNo: null, ...slot, employeeId: employeeId || meEmp().id };
-      checkTake(sl);
+      checkTake(sl, !!employeeId);
       st.signups.push({ id: st.nextId++, employeeId: sl.employeeId, date: sl.date, block: sl.block, teamId: sl.teamId, homeId: sl.homeId, clusterNo: sl.clusterNo });
       st.waitlist = st.waitlist.filter((w) => !(w.employeeId === sl.employeeId && w.date === sl.date && w.block === sl.block));
       done();
     },
     async drop(id, asHr) {
       const s = st.signups.find((x) => x.id === id); if (!s) return {};
-      if (!asHr && shiftStart(s.date, s.block) - Date.now() < DROP_HOURS * 36e5) throw friendlyError("Shifts can't be dropped within 48 hours of the start. Talk to your Lead DSP or HR.");
+      if (!asHr && shiftStart(s.date, s.block) - Date.now() < DROP_HOURS * 36e5) throw friendlyError("Shifts can only be cancelled 3 or more days before they start. Call out or offer it to a teammate.");
+      if (!asHr && !st.waitlist.some((w) => sameSlot(w, s))) throw friendlyError("You can cancel only when someone is on the waitlist to take it. Offer it to a teammate instead.");
       st.signups = st.signups.filter((x) => x.id !== id); st.offers = (st.offers || []).filter((o) => o.signupId !== id);
       const w = fillFrom(s); done();
       return { filledBy: w ? w.employeeId : null };
@@ -427,7 +450,7 @@ async function supabaseBackend(cfg) {
     const code = error && error.code, m = (error && error.message) || "";
     if (code === "P0001") return friendlyError(m.endsWith(".") ? m : m + ".");
     if (code === "23505") return friendlyError("You already have a shift (or a waitlist spot) at that time.");
-    if (code === "42501" || /row-level security/i.test(m)) return friendlyError("Not allowed: you can only take future shifts on your own teams, and not in a week HR has published.");
+    if (code === "42501" || /row-level security/i.test(m)) return friendlyError("Not allowed: shifts must be on your own team, inside your sign-up window, and outings need a driver's license.");
     if (/JWT|session/i.test(m)) return friendlyError("Your sign-in expired. Please sign in again.");
     return friendlyError(m || "That didn't save. Check your connection and try again.");
   };
@@ -517,7 +540,7 @@ async function supabaseBackend(cfg) {
     },
     async drop(id) {
       const rows = await run(sb.from("dsp_signups").delete().eq("id", id).select("id"));
-      if (!rows || !rows.length) throw friendlyError("Shifts can't be dropped within 48 hours of the start. Talk to your Lead DSP or HR.");
+      if (!rows || !rows.length) throw friendlyError("You can cancel only 3 or more days ahead, and only when someone is on the waitlist. Offer it to a teammate instead.");
       return {};
     },
     async joinWait(slot) { await run(sb.from("dsp_waitlist").insert({ employee_id: await this.myEmployeeId(), ...slotRow(slot) })); },

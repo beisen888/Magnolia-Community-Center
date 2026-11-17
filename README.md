@@ -67,6 +67,7 @@ Vercel → Project → **Settings → Domains** → add e.g. `shifts.yourorg.org
 - **Demo data:** 220 demo DSPs (180 house staff, 24 outings staff, 16 named) so coverage looks like a real week with a realistic number of gaps.
 - **v2.5:** shift swaps (offer → a teammate claims → HR or the team's Lead DSP approves), call-outs inside 48 hours (HR is told, the waitlist fills it), "days I can't work", 6-month milestones with one-tap promotion, a staffing mix bar (Magnolia DSPs vs temps vs open), a temp-hours-by-month chart, and "Fill my week for me".
 - **Magnolia Helper (chat):** the green bubble in the bottom right. Answers come instantly from `help.js` (30 FAQs, DSP and HR). Optional: add `ANTHROPIC_API_KEY` in Vercel and questions the FAQ can't answer go to Claude through `/api/ask` (signed-in staff only, answers limited to the facts in `help.js`). To change answers, edit `help.js`.
+- **Sign-up by rank (v2.7):** each month opens in the month before: Lead DSPs the 2nd week, DSP IIs a week later, DSP Is a week after; it closes the Sunday before that month's last week (DSP Is always get at least a week). Cancelling needs 3+ days' notice and someone on the waitlist; inside 3 days it's an emergency call-out. Community Outings need a driver's license (enforced on sign-up). Rules live in `signupWindow()` in data.js and `signup_window()` in dsp.sql.
 
 ## Handing it to a client
 See **HANDOFF.md**: transfer this board, or let them build their own from a template.

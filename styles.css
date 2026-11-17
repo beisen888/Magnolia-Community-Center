@@ -628,3 +628,18 @@ table.mini td:last-child{text-align:right;padding-left:10px;white-space:nowrap;f
   .mh-panel{position:fixed;left:10px;right:10px;width:auto;bottom:calc(80px + env(safe-area-inset-bottom,0px));height:min(560px,calc(100vh - 110px))}}
 @media (prefers-reduced-motion: reduce){.mh-ring,.mh-live,.mh.nudge .mh-fab,.mh-panel,.mh-msg,.mh-typing i{animation:none}}
 @media print{.mh{display:none}}
+
+/* ---------- sign-up calendar by rank ---------- */
+.wline{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));position:relative}
+.wline::before{content:"";position:absolute;left:12.5%;right:12.5%;top:9px;height:3px;border-radius:2px;background:var(--line)}
+.wline li{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:2px;font-size:13px}
+.wline i{width:20px;height:20px;border-radius:50%;background:var(--surface);border:3px solid var(--line);position:relative;z-index:1;margin-bottom:4px}
+.wline li.done i{border-color:var(--accent-2);background:var(--accent-2)}
+.wline li.now i{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent-2) 22%,transparent)}
+.wline li:last-child.done i{border-color:var(--warn);background:var(--warn)}
+.wline b{font-size:13.5px}
+.wline span{color:var(--muted)}
+.wline em{font-style:normal;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--gold);color:#1F2A20;border-radius:999px;padding:1px 7px;margin-top:2px}
+.wline li.mine b{color:var(--accent)}
+.card.win{margin-bottom:14px}
+.card.win h3{font-size:18px}
