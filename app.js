@@ -373,7 +373,7 @@ function viewHome() {
   if (!emp.teams.length) h += `<div class="card" style="margin-bottom:18px;border-color:var(--accent)"><div class="sec-title"><h2>First, find your team</h2></div><p class="muted" style="margin:0 0 12px">You'll only see and take shifts on your team(s). Take the 2-minute quiz, or pick teams yourself.</p><button class="btn lg" data-act="tab" data-tab="quiz">Take the quiz</button> <button class="btn ghost lg" data-act="tab" data-tab="teams">Browse teams</button></div>`;
 
   if (!seenTips() && emp.teams.length) h += `<section class="card tips"><div class="sec-title"><h3>Welcome to the new schedule</h3><button class="btn sm" data-act="tipsdone">Got it</button></div>
-    <ol><li><b>Pick shifts below.</b> House shifts name your house; outing shifts name your resident cluster.</li><li><b>Shift full?</b> Join the waitlist. If someone drops, you're added automatically.</li><li><b>Turn on phone alerts</b> (My profile) for a heads-up 24 hours and 1 hour before.</li></ol></section>`;
+    <ol><li><b>Pick shifts on the Schedule tab.</b> Tap a day, then tap 4 hrs or 8 hrs.</li><li><b>Shift full?</b> Join the waitlist. If someone drops, you're added automatically.</li><li><b>Turn on phone alerts</b> (My profile) for a heads-up 24 hours and 1 hour before.</li></ol></section>`;
   h += `<div class="grid2"><div class="stack">`;
   h += `<section class="card week"><div class="sec-title"><h3>Week of ${fmt(ws, { month: "short", day: "numeric" })} – ${fmt(we, { month: "short", day: "numeric" })}</h3>
     <div class="weeknav"><button data-act="week" data-d="-7" aria-label="Previous week">‹</button><button class="linkbtn" data-act="week" data-d="0">This week</button><button data-act="week" data-d="7" aria-label="Next week">›</button></div></div>
@@ -382,17 +382,11 @@ function viewHome() {
     <div class="progress-key">${Object.entries(perTeam).map(([tid, n]) => { const t = teamById(+tid); return `<span class="${teamClass(t)}"><i></i>${esc(t ? t.shortName : "")} ${hrsTxt(n)}h</span>`; }).join("") || "<span>No shifts this week yet</span>"}</div>
     <div class="days7">${[0, 1, 2, 3, 4, 5, 6].map((i) => { const d = addDays(ws, i), ss = mine.filter((s) => s.date === d);
       return `<button class="d7${d === TODAY ? " today" : ""}" data-act="openday" data-date="${d}"><span class="dn">${fmt(d, { weekday: "short" })} ${parse(d).getDate()}</span>${ss.length ? ss.map((s) => { const t = teamById(s.teamId), p = placeOf(s); return `<span class="bar ${teamClass(t)}" title="${esc(t ? t.shortName : "")}${p ? " · " + esc(p) : ""}">${hShort(BLOCKS[s.block].start)}–${hShort(BLOCKS[s.block].end)}${p ? `<em>${esc(p.replace(/^Home\s*/i, "H").replace(/^Cluster\s*/i, "C"))}</em>` : ""}</span>`; }).join("") : `<span class="off">Off</span>`}</button>`; }).join("")}</div></section>`;
-  h += fillWeek(emp, ws, we, hours, target);
+  if (emp.teams.length) h += `<section class="card pickcta"><div><b>${hours >= target ? "Want extra hours?" : `${hrsTxt(target - hours)} hrs to go this week`}</b><span class="muted">Pick and change shifts on the Schedule tab.</span></div><button class="btn" data-act="tab" data-tab="schedule">Pick shifts</button></section>`;
   h += `</div><div class="stack">`;
   h += nextShift(emp) + swapsCard(emp) + waitCard(emp) + myTeamCard(emp, ws, we) + cycleCard(emp) + profileCard(emp);
   h += `</div></div>`;
   return h;
-}
-let selSeq = 0;
-function fillWeek(emp, ws, we, hours, target) {
-  if (!emp.teams.length) return "";
-  const list = openForMe(emp, ws, we);
-  return fillWeekHtml(emp, list, hours, target, ws);
 }
 /* open shifts on my teams between two dates, with the house/cluster I'd most likely want */
 function openForMe(emp, ws, we) {
@@ -419,21 +413,6 @@ function fillPlan(emp, list, hours, target) {
     used.add(k); (perDay[x.d] ||= []).push(x.b); plan.push(x); h += 4;
   }
   return plan;
-}
-function fillWeekHtml(emp, list, hours, target, ws) {
-  const title = hours >= target ? "Want extra hours?" : `Fill your week · ${hrsTxt(target - hours)} hrs to go`;
-  if (!list.length) return `<section class="card"><div class="sec-title"><h3>${title}</h3></div><p class="muted" style="margin:0">${windowNote(emp, ws > TODAY ? ws : TODAY) ? esc(windowNote(emp, ws > TODAY ? ws : TODAY)) + ". " : "No open shifts on your teams this week. "}Check the sign-up calendar, or join a waitlist on Schedule.</p></section>`;
-  const rows = list.slice(0, 8);
-  return `<section class="card"><div class="sec-title"><h3>${title}</h3><span>${hours < target ? `<button class="btn sm gold" data-act="autofill">★ Fill my week for me</button> ` : ""}<button class="linkbtn" data-act="tab" data-tab="schedule">Full schedule</button></span></div><div class="openlist">${rows.map((x) => {
-    const multi = x.t.staffing !== "fixed" && x.pick.label, id = "u" + ++selSeq;
-    const next = x.b < 5 && x.t.staffing !== "cluster" && units(x.t, x.d, x.b + 1).find((u) => u.homeId === x.pick.homeId && u.clusterNo === x.pick.clusterNo);
-    const eight = next && canTake(emp, next, x.t);
-    const sel = multi ? `<select id="${id}" class="unitsel" aria-label="${x.t.staffing === "home" ? "House" : "Cluster"}">${x.open.map((u) => `<option value="${u.homeId ?? ""}|${u.clusterNo ?? ""}"${u === x.pick ? " selected" : ""}>${esc(u.label)} · ${u.need - taken(u)} open</option>`).join("")}</select>` : "";
-    const opens = x.open.reduce((a, u) => a + u.need - taken(u), 0);
-    return `<div class="orow ${teamClass(x.t)}"><div class="d">${short(x.d)}<small>${x.d === TODAY ? "Today" : x.d === addDays(TODAY, 1) ? "Tomorrow" : ""}</small></div>
-      <div class="t"><b>${BLOCKS[x.b].label}</b> ${isNight(x.b) ? `<span class="badge night">Overnight</span>` : ""}<small>${esc(x.t.shortName)} · ${opens} open${x.t.staffing === "home" ? ` in ${plural(x.open.length, "house")}` : ""}</small>${sel}</div>
-      <div class="acts"><button class="btn" data-act="take" data-date="${x.d}" data-block="${x.b}" data-team="${x.t.id}" data-home="${x.pick.homeId ?? ""}" data-cl="${x.pick.clusterNo ?? ""}"${multi ? ` data-sel="${id}"` : ""}>4 hrs</button>${eight ? `<button class="btn ghost" data-act="take" data-date="${x.d}" data-block="${x.b}" data-team="${x.t.id}" data-home="${x.pick.homeId ?? ""}" data-cl="" data-two="1"${multi ? ` data-sel="${id}"` : ""} title="This block plus the next one">8 hrs</button>` : ""}</div></div>`;
-  }).join("")}</div></section>`;
 }
 function seenTips() { try { return localStorage.getItem("magnolia-tips-done") === "1"; } catch (_) { return true; } }
 function waitCard(emp) {
@@ -484,6 +463,12 @@ function rotationHtml(team, s) {
   const r = rotation(team, s.block, s.date);
   if (!r) return `<p class="muted note">Overnight residential coverage.</p>`;
   return `<div class="rot">${r.map((x) => `<div><b>${hShort(x.hour)}–${hShort(x.hour + 1)}${x.cluster ? " · Cluster " + x.cluster : ""}</b>${esc(x.activity)}${x.size ? `<br><span class="muted" style="font-size:11.5px">${x.size} residents</span>` : ""}</div>`).join("")}</div>`;
+}
+/* my hour-by-hour cluster rotation for one on-campus shift, as a short list */
+function rotList(team, s) {
+  const r = rotation(team, s.block, s.date);
+  if (!r || !r.some((x) => x.cluster)) return "";
+  return `<div class="myrot"><b>Your rotation</b><ol>${r.map((x) => `<li><span class="tm">${hShort(x.hour)}–${hShort(x.hour + 1)}</span><b>Cluster ${x.cluster}</b><span class="muted">${esc(x.activity)}${x.size ? ` · ${x.size} residents` : ""}</span></li>`).join("")}</ol></div>`;
 }
 function nextShift(emp) {
   const nowH = NOW.getHours();
@@ -548,8 +533,13 @@ function viewSchedule() {
       ${mine.map((s) => { const t = teamById(s.teamId), p = placeOf(s); return `<span class="mine ${teamClass(t)}">${hShort(BLOCKS[s.block].start)} ${esc(p ? p.replace(/^Home\s*/i, "H").replace(/^Cluster\s*/i, "C") : t ? t.shortName : "")}</span>`; }).join("")}
       <span class="cov${pct < 0.7 ? " low" : ""}" title="${Math.round(pct * 100)}% staffed"><span style="width:${pct * 100}%"></span></span></button>`;
   }
+  let wk = "";
+  if (emp && emp.teams.length) {
+    const ws = weekStart(S.sel), hrs = weekHours(emp.id, ws), tgt = emp.weeklyTarget || 40;
+    wk = `<div class="weekhrs"><span><b>${hrsTxt(hrs)}</b> / ${tgt} hrs <span class="muted">· week of ${fmt(ws, { month: "short", day: "numeric" })}</span></span>${hrs < tgt && addDays(ws, 6) >= TODAY ? `<button class="btn sm gold" data-act="autofill">Fill my week for me</button>` : ""}</div>`;
+  }
   return `<div class="grid2"><div><div class="calhead"><button class="iconbtn" data-act="month" data-d="-1" aria-label="Previous month">‹</button><h2>${monthName(mk)}</h2><button class="iconbtn" data-act="month" data-d="1" aria-label="Next month">›</button>
-</div>
+</div>${wk}
     <div class="dow">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((x) => `<div>${x}</div>`).join("")}</div><div class="cal">${cal}</div>
     <p class="muted" style="font-size:13px;margin-top:10px">Colored tags are your shifts (H = house, C = outing cluster). The bar under each day shows staffing (orange = short). ${emp ? esc(windowNote(emp, activeSignupMonth() + "-01") || `${monthWord(activeSignupMonth() + "-01")} sign-up is open for you until ${shortDay(signupWindow(activeSignupMonth()).close)}`) + "." : ""}</p></div>
     <aside class="card day" id="day">${dayPanel(emp)}</aside></div>`;
@@ -598,7 +588,7 @@ function dayPanel(emp) {
       if (t.staffing === "fixed" || (us.length === 1 && !us[0].label)) {
         const u = us[0]; if (!u) continue;
         const ppl = inSlot(u), mineHere = emp && ppl.some((s) => s.employeeId === emp.id);
-        h += `<div class="slot ${teamClass(t)}${mineHere ? " mine" : ""}${dim}"><span class="nm">${esc(t.shortName)}</span><span class="fill${taken(u) >= u.need ? " full" : ""}">${taken(u)}/${u.need}</span>${hr && ppl.length && !ppl.some((s) => leadOf(empById(s.employeeId))) ? `<span class="badge warn">No Lead DSP</span>` : ""}${slotActs(emp, u, t, hr)}${pplHtml(emp, u, t, hr)}</div>`;
+        h += `<div class="slot ${teamClass(t)}${mineHere ? " mine" : ""}${dim}"><span class="nm">${esc(t.shortName)}</span><span class="fill${taken(u) >= u.need ? " full" : ""}">${taken(u)}/${u.need}</span>${hr && ppl.length && !ppl.some((s) => leadOf(empById(s.employeeId))) ? `<span class="badge warn">No Lead DSP</span>` : ""}${slotActs(emp, u, t, hr)}${pplHtml(emp, u, t, hr)}${mineHere ? rotList(t, u) : ""}</div>`;
         continue;
       }
       // per-house or per-cluster team: summary + pick grid
@@ -646,12 +636,16 @@ function viewTeams() {
   h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>Team roles</h2><span class="muted" style="font-size:14px">HR assigns each person's role</span></div>
     <div class="ladder">${[["Lead DSP", "Runs the team's shifts, mentors DSP Is, leads shadow shifts and holds a weekly check-in."], ["DSP II", "Experienced DSP (6+ months). Helps run activities and works with volunteers."], ["DSP I", "First 6 months. Learns the team's routine with shadow shifts and a Lead DSP as mentor."]].map(([n, d]) => `<div class="rung${n === lvl ? " me" : ""}"><span class="eyebrow">${n === lvl ? "Your role" : "Role"}</span><div class="v" style="font-size:20px">${n}</div><div class="muted" style="font-size:14px">${d}</div></div>`).join("")}</div></section>`;
   h += outingClusters(monthKey(TODAY), false);
-  const teams = activeTeams().filter((t) => t.staffing === "fixed" && t.needs[3]);
-  if (teams.length && Object.keys(monthClusters(monthKey(TODAY))).length) {
-    const rots = teams.map((t) => rotation(t, 3, TODAY));
-    h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>Today's 12–4 PM rotation</h2><span class="muted" style="font-size:13px">Each on-campus team spends an hour with each of 4 clusters</span></div><div class="tw"><table class="grid"><thead><tr><th>Hour</th>${teams.map((t) => `<th>${esc(t.shortName)}</th>`).join("")}</tr></thead><tbody>`;
-    for (let hr = 0; hr < 4; hr++) h += `<tr><th>${hShort(12 + hr)}–${hShort(13 + hr)}</th>${teams.map((t, i) => `<td class="${teamClass(t)}"><b>Cluster ${rots[i][hr].cluster}</b><small>${esc(rots[i][hr].activity)}</small></td>`).join("")}</tr>`;
-    h += `</tbody></table></div><p class="muted" style="font-size:12px;margin:8px 0 0">Clusters on an outing that afternoon are skipped. The rotation changes day to day so every cluster gets a turn.</p></section>`;
+  // today's cluster rotation, only for the on-campus style teams I'm on (everyone's, if I'm on none)
+  const fixedTeams = activeTeams().filter((t) => t.staffing === "fixed"), mineFixed = fixedTeams.filter((t) => emp && emp.teams.includes(t.id));
+  const rotTeams = mineFixed.length || (emp && emp.teams.length) ? mineFixed : fixedTeams;
+  if (Object.keys(monthClusters(monthKey(TODAY))).length) for (const t of rotTeams) {
+    const blks = [0, 1, 2, 3, 4, 5].filter((b) => t.needs[b] && !isNight(b));
+    if (!blks.length) continue;
+    const rots = blks.map((b) => rotation(t, b, TODAY));
+    h += `<section class="card" style="margin-top:18px"><div class="sec-title"><h2>${esc(t.shortName)} rotation · today</h2><span class="muted" style="font-size:13px">One hour with each cluster, then move on</span></div><div class="tw"><table class="grid ${teamClass(t)}"><thead><tr><th></th>${blks.map((b) => `<th>${BLOCKS[b].label}</th>`).join("")}</tr></thead><tbody>`;
+    for (let i = 0; i < 4; i++) h += `<tr><th>Hour ${i + 1}</th>${rots.map((r) => `<td><span class="muted tiny">${hShort(r[i].hour)}–${hShort(r[i].hour + 1)}</span><b>${r[i].cluster ? "Cluster " + r[i].cluster : "Open"}</b><small>${esc(r[i].activity)}</small></td>`).join("")}</tr>`;
+    h += `</tbody></table></div><p class="muted" style="font-size:12px;margin:8px 0 0">Clusters out on an outing are skipped. The order changes each day so every cluster gets a turn.</p></section>`;
   }
   return h;
 }
@@ -1057,7 +1051,7 @@ const actions = {
   deltimeoff: (d) => act(() => B.removeTimeOff(+d.id), "Removed."),
   promote: (d) => { const e = empById(d.id); if (e && confirm(`Promote ${d.name} to DSP II?`)) act(() => B.hrSaveEmployee({ ...e, level: "DSP II" }), `${d.name} is now a DSP II.`); },
   autofill: () => {
-    const emp = myEmp(), ws = weekStart(S.weekRef), we = addDays(ws, 6), hours = weekHours(emp.id, ws), target = emp.weeklyTarget || 40;
+    const emp = myEmp(), ws = weekStart(S.sel), we = addDays(ws, 6), hours = weekHours(emp.id, ws), target = emp.weeklyTarget || 40;
     const plan = fillPlan(emp, openForMe(emp, ws, we), hours, target);
     if (!plan.length) return toast("No open shifts fit your week right now. Try a waitlist on the Schedule tab.");
     const lines = plan.map((x) => `• ${short(x.d)}, ${BLOCKS[x.b].label} · ${x.t.shortName}${x.pick.label ? " · " + x.pick.label : ""}`).join("\n");
