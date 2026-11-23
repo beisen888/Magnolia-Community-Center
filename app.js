@@ -624,7 +624,8 @@ function dayPanel(emp) {
   if (!teams.length) return h + `<div class="empty">You're not on a team yet. <button class="linkbtn" data-act="tab" data-tab="quiz">Find your team</button></div>`;
   // DSPs see only blocks where they work or can still do something; "Show all" brings back the rest
   const focus = emp && !hr && S.myTeamsOnly && !S.allBlocks && !past;
-  const useful = (t, b) => units(t, ds, b).some((u) => inSlot(u).some((x) => x.employeeId === emp.id) || myWait(emp, u) || canTake(emp, u, t) || canWait(emp, u, t));
+  const P = focus && prefsOf(emp), likeDay = P && P.days.includes(parse(ds).getDay());
+  const useful = (t, b) => (!likeDay || P.blocks.includes(b) || units(t, ds, b).some((u) => inSlot(u).some((x) => x.employeeId === emp.id))) && units(t, ds, b).some((u) => inSlot(u).some((x) => x.employeeId === emp.id) || myWait(emp, u) || canTake(emp, u, t) || canWait(emp, u, t));
   let shown = 0, hidden = 0;
   for (let b = 0; b < 6; b++) {
     const all = teams.filter((t) => t.needs[b] > 0), here = focus ? all.filter((t) => useful(t, b)) : all;
@@ -645,7 +646,7 @@ function dayPanel(emp) {
       const openUnits = us.filter((u) => taken(u) < u.need).length, word = t.staffing === "home" ? "house" : "cluster";
       const open = S.open === key;
       h += `<div class="slot big ${teamClass(t)}${mine ? " mine" : ""}${dim}"><span class="nm">${esc(t.shortName)}<small>${us.length ? `${plural(us.length, word)}${t.staffing === "cluster" ? " out" : ""} · ${openUnits} with room` : `No ${word}s out this block`}</small></span><span class="fill${tot.have >= tot.need ? " full" : ""}">${tot.have}/${tot.need}</span>
-        ${mine ? `<span class="badge good">You · ${esc(placeOf(mine))}</span>` : ""}
+        ${mine ? `<span class="badge good">You · ${esc(placeOf(mine))}</span>${shiftBtns(mine)}` : ""}
         ${!mine && !open ? quickPick(emp, t, us) : ""}
         ${us.length ? `<button class="btn ${open ? "quiet" : "ghost"} sm" data-act="openunits" data-key="${key}" aria-expanded="${open}">${open ? "Close" : mine || past ? `See ${word}s` : quickPick(emp, t, us) ? `Other ${word}s` : openUnits ? `Pick a ${word}` : "Join a waitlist"}</button>` : ""}
         ${open ? unitGrid(emp, t, us, hr) : ""}</div>`;
@@ -653,7 +654,7 @@ function dayPanel(emp) {
     h += `</div></div>`;
   }
   if (focus && !shown) h += `<div class="empty" style="padding:22px 10px">Nothing open for you on this day.${hidden ? ` <button class="linkbtn" data-act="allblocks">Show every shift</button>` : ""}</div>`;
-  else if (focus && hidden) h += `<p class="muted tiny" style="margin:10px 0 0">Hiding ${plural(hidden, "full shift")}. <button class="linkbtn" data-act="allblocks">Show all</button></p>`;
+  else if (focus && hidden) h += `<p class="muted tiny" style="margin:10px 0 0">Hiding ${plural(hidden, "shift")} that ${likeDay ? "are full or outside your preferred times" : hidden === 1 ? "is full" : "are full"}. <button class="linkbtn" data-act="allblocks">Show all</button></p>`;
   else if (S.allBlocks && emp && !hr && !past) h += `<p class="muted tiny" style="margin:10px 0 0"><button class="linkbtn" data-act="allblocks">Only show shifts I can take</button></p>`;
   return h;
 }
