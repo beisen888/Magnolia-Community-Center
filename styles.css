@@ -659,3 +659,71 @@ table.mini td:last-child{text-align:right;padding-left:10px;white-space:nowrap;f
 .myrot .tm{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
 @media (max-width:560px){.myrot li{grid-template-columns:56px minmax(0,1fr)}.myrot li .muted{grid-column:2}}
 table.grid td .tiny{display:block}
+
+/* ---------- name chip opens My profile ---------- */
+.mechip{cursor:pointer;border:1px solid var(--line);font:inherit}
+.mechip:hover,.mechip[aria-current]{border-color:var(--accent)}
+
+/* ---------- phones: tabs become a bottom bar ---------- */
+@media (max-width:600px){
+  .navbar{position:fixed;top:auto;left:0;right:0;bottom:0;z-index:40;padding-top:0;padding-bottom:env(safe-area-inset-bottom,0px);box-shadow:0 -6px 18px -10px rgba(0,0,0,.35)}
+  .navbar .tabs{gap:0;padding:0}
+  .navbar .tabs button{flex:1 1 0;text-align:center;padding:14px 4px 13px;font-size:14px;border-bottom:0;border-top:3px solid transparent}
+  .navbar .tabs button[aria-selected="true"]{border-top-color:var(--gold);background:rgba(255,255,255,.08)}
+  .navbar .tabs .count{display:inline-block;margin-left:4px;font-size:10px;padding:0 5px}
+  body{padding-bottom:calc(58px + env(safe-area-inset-bottom,0px))}
+  html{scroll-padding-bottom:calc(80px + env(safe-area-inset-bottom,0px))}
+  .navbar .tabs .cw{display:none}
+  .toast{bottom:calc(70px + env(safe-area-inset-bottom,0px))}
+  .mh{bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+  .mh-fab{width:50px;height:50px}
+  .mh-panel{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
+}
+
+/* ---------- phone calendar: short readable tags ---------- */
+@media (max-width:560px){
+  .cell .mine{font-size:9px;height:auto;padding:1px 3px;letter-spacing:-.02em;line-height:1.3}
+  .d7 .bar{font-size:9px;height:auto;padding:1px 3px;line-height:1.3}
+  .d7 .bar em{display:none}
+  .d7 .bar .endt{display:none}
+}
+.cell .mine.ghost{background:transparent;color:var(--tc);border:1.5px dashed var(--tc);padding:0 4px}
+
+/* ---------- schedule: quick pick, plan preview ---------- */
+.quick{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.plan{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:-2px 0 12px;padding:12px 14px;border-radius:10px;border:1.5px dashed var(--gold);background:color-mix(in srgb,var(--gold) 10%,var(--surface))}
+.plan>div:first-child{display:flex;flex-direction:column;gap:2px;font-size:14px}
+.plan ul{margin:6px 0 0;padding-left:18px;font-size:13px}
+
+/* ---------- HR: today list ---------- */
+.todo ul{list-style:none;margin:0;padding:0}
+.todo li{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 0 11px 12px;border-top:1px solid var(--line);border-left:3px solid var(--line)}
+.todo li:first-child{border-top:0}
+.todo li.hot{border-left-color:var(--warn)}
+.todo li>div:first-child{flex:1 1 240px;display:flex;flex-direction:column;gap:1px;font-size:15px}
+.todo li .muted{font-size:13px}
+.todo .todo-sub{flex-basis:100%}
+
+/* ---------- HR: coverage grid, one cell per block ---------- */
+.covgrid.simple td{padding:0}
+.covgrid .cv{width:100%;border:0;border-radius:6px;padding:9px 4px;font:600 12px var(--f-mono);cursor:pointer}
+.cv.ok,.cvkey.ok::before{background:color-mix(in srgb,var(--good) 18%,var(--surface));color:var(--good)}
+.cv.short,.cvkey.short::before{background:color-mix(in srgb,var(--warn) 22%,var(--surface));color:var(--warn)}
+.cv.bad,.cvkey.bad::before{background:var(--warn);color:#fff}
+.cv[aria-pressed="true"]{outline:2px solid var(--ink);outline-offset:1px}
+.cvkey{display:inline-flex;align-items:center;gap:5px}
+.cvkey::before{content:"";width:12px;height:12px;border-radius:3px}
+.covdetail{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.covrows{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px}
+.covrows>div{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:var(--sunk);font-size:13.5px}
+.covrows .dot{width:9px;height:9px;border-radius:50%}
+.covrows .mono{margin-left:auto}
+.warnc{color:var(--warn);font-weight:600}
+
+/* ---------- HR: employee filters, team summaries ---------- */
+.fchips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.fchip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer}
+.fchip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.teamsum{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,320px) auto;align-items:center;gap:14px;border-left:5px solid var(--tc)}
+.teamsum h3{margin:0 0 2px}
+@media (max-width:700px){.teamsum{grid-template-columns:minmax(0,1fr) auto}.teamsum .blocksmini{grid-column:1/-1;grid-row:2}}
