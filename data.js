@@ -457,7 +457,7 @@ async function supabaseBackend(cfg) {
   const toTeam = (t) => ({ id: t.id, key: t.key, name: t.name, shortName: t.short_name || t.name, description: t.description, activities: t.activities || [],
     needsLicense: t.needs_license, needs: t.needs || [0, 0, 0, 0, 0, 0], staffing: t.staffing || "fixed", color: t.color, sort: t.sort, active: t.active });
   const toEmp = (e) => ({ id: e.id, userId: e.user_id, name: e.name, email: e.email, level: e.level, hireDate: e.hire_date, weeklyTarget: e.weekly_target,
-    hasLicense: e.has_license, hasCna: e.has_cna, teams: e.teams || [], quizTeam: e.quiz_team, active: e.active, demo: e.demo });
+    hasLicense: e.has_license, hasCna: e.has_cna, teams: e.teams || [], quizTeam: e.quiz_team, active: e.active, demo: e.demo, prefs: e.prefs && e.prefs.days ? e.prefs : null });
   const toSlot = (r) => ({ id: r.id, employeeId: r.employee_id, date: r.shift_date, block: r.block, teamId: r.team_id, homeId: r.home_id ?? null, clusterNo: r.cluster_no ?? null });
   const slotRow = (s) => ({ shift_date: s.date, block: s.block, team_id: s.teamId, home_id: s.homeId ?? null, cluster_no: s.clusterNo ?? null });
 
@@ -561,6 +561,12 @@ async function supabaseBackend(cfg) {
       if ("hasLicense" in patch) row.has_license = patch.hasLicense;
       if ("hasCna" in patch) row.has_cna = patch.hasCna;
       if ("quizTeam" in patch) row.quiz_team = patch.quizTeam;
+      if ("prefs" in patch) {   // shift preferences; kept on this device too until supabase/dsp.sql (prefs column) has been run
+        try { localStorage.setItem("magnolia-prefs", JSON.stringify(patch.prefs)); } catch (_) {}
+        const r = await sb.from("employees").update({ prefs: patch.prefs }).eq("user_id", me.userId);
+        if (r.error && !/prefs/.test(r.error.message || "")) throw friendlyError("Couldn't save your preferences.");
+        if (Object.keys(row).length === 0) return;
+      }
       await run(sb.from("employees").update(row).eq("user_id", me.userId));
       if ("name" in patch) await sb.from("profiles").update({ name: patch.name }).eq("id", me.userId);
     },

@@ -727,3 +727,13 @@ table.grid td .tiny{display:block}
 .teamsum{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,320px) auto;align-items:center;gap:14px;border-left:5px solid var(--tc)}
 .teamsum h3{margin:0 0 2px}
 @media (max-width:700px){.teamsum{grid-template-columns:minmax(0,1fr) auto}.teamsum .blocksmini{grid-column:1/-1;grid-row:2}}
+
+/* ---------- shift preferences ---------- */
+.prefs{display:flex;flex-direction:column;gap:12px}
+.togs{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.tog{position:relative;cursor:pointer}
+.tog input{position:absolute;opacity:0;pointer-events:none}
+.tog span{display:inline-block;min-width:44px;text-align:center;padding:8px 11px;border-radius:8px;border:1px solid var(--line);background:var(--surface);font-size:13.5px;font-weight:600;color:var(--muted)}
+.tog input:checked+span{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.tog input:focus-visible+span{outline:2px solid var(--gold);outline-offset:2px}
+.plan.ask{flex-direction:column;align-items:stretch}

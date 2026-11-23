@@ -401,15 +401,41 @@ function openForMe(emp, ws, we) {
   }
   return list.sort((a, b) => (a.d !== b.d ? (a.d < b.d ? -1 : 1) : a.b - b.b || a.t.sort - b.t.sort));
 }
+/* ---------- shift preferences: which days and times I like, and my longest day ---------- */
+const DAYN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function prefsOf(emp) {
+  if (emp && emp.prefs && emp.prefs.days) return emp.prefs;
+  try { const p = JSON.parse(localStorage.getItem("magnolia-prefs") || "null"); if (p && p.days) return p; } catch (_) {}
+  return null;
+}
+function prefsText(p) {
+  const d = [...p.days].sort(), k = d.join("");
+  const days = k === "0123456" ? "Any day" : k === "12345" ? "Weekdays" : k === "06" ? "Weekends" : [1, 2, 3, 4, 5, 6, 0].filter((x) => d.includes(x)).map((x) => DAYN[x]).join(", ");
+  const b = [...p.blocks].sort((x, y) => x - y), run = b.every((x, i) => !i || x === b[i - 1] + 1);
+  const times = b.length === 6 ? "any time" : run && b.length ? `${clock(BLOCKS[b[0]].start * 60)}–${clock(BLOCKS[b[b.length - 1]].end * 60)}` : b.map((x) => BLOCKS[x].label).join(", ");
+  return `${days} · ${times} · up to ${p.maxPerDay || 8} hrs a day`;
+}
+/* the form, used in My profile and the first time someone taps Fill my week */
+function prefsForm(emp, then) {
+  const p = prefsOf(emp) || { days: [1, 2, 3, 4, 5], blocks: [2, 3, 4], maxPerDay: 8 };
+  const tog = (name, v, label, on) => `<label class="tog"><input type="checkbox" name="${name}" value="${v}"${on ? " checked" : ""}><span>${label}</span></label>`;
+  return `<form class="prefs" data-form="prefs"${then ? ` data-then="${then}"` : ""}>
+    <div><span class="eyebrow">Days I like to work</span><div class="togs">${[1, 2, 3, 4, 5, 6, 0].map((d) => tog("day", d, DAYN[d], p.days.includes(d))).join("")}</div></div>
+    <div><span class="eyebrow">Times I like to work</span><div class="togs">${BLOCKS.map((b, i) => tog("blk", i, b.label.replace(/\s?(AM|PM)/g, (m) => m.trim().toLowerCase()[0]), p.blocks.includes(i))).join("")}</div></div>
+    <div><span class="eyebrow">Longest day</span><div class="togs">${[4, 8].map((n) => `<label class="tog"><input type="radio" name="max" value="${n}"${(p.maxPerDay || 8) === n ? " checked" : ""}><span>${n} hrs</span></label>`).join("")}</div></div>
+    <div class="rowact" style="margin:0;justify-content:flex-start">${then ? `<button type="button" class="btn quiet" data-act="cancelplan">Not now</button><button class="btn gold">Save and build my week</button>` : `<button class="btn">Save preferences</button>`}</div></form>`;
+}
 /* a plan that gets me to my weekly target: at most 8 hours a day, back-to-back blocks first */
 function fillPlan(emp, list, hours, target) {
+  const P = prefsOf(emp), cap = P ? Math.max(1, (P.maxPerDay || 8) / 4) : 2;
+  if (P) list = list.filter((x) => P.days.includes(parse(x.d).getDay()) && P.blocks.includes(x.b));
   const perDay = {}, used = new Set(), plan = []; let h = hours;
   for (const s of S.signups) if (s.employeeId === emp.id) (perDay[s.date] ||= []).push(s.block);
   const score = (x) => ((perDay[x.d] || []).some((b) => Math.abs(b - x.b) === 1) ? 0 : 1);   // next to a block I already have
   for (const pass of [0, 1]) for (const x of list) {
     if (h >= target) return plan;
     const k = `${x.d}|${x.b}`, mine = perDay[x.d] || [];
-    if (used.has(k) || mine.length >= 2 || (pass === 0 && mine.length && score(x))) continue;
+    if (used.has(k) || mine.length >= cap || (pass === 0 && mine.length && score(x))) continue;
     used.add(k); (perDay[x.d] ||= []).push(x.b); plan.push(x); h += 4;
   }
   return plan;
@@ -512,8 +538,9 @@ function alertsBlock() {
 function viewProfile() {
   const emp = myEmp();
   if (!emp) return `<div class="empty">Loading…</div>`;
+  const P = prefsOf(emp);
   return `<div class="sec-title"><h2>My profile</h2><button class="linkbtn" data-act="tab" data-tab="home">Back to My week</button></div>
-    <div class="grid2"><div class="stack">${profileCard(emp)}</div><div class="stack">${cycleCard(emp)}</div></div>`;
+    <div class="grid2"><div class="stack"><section class="card"><span class="eyebrow">Shift preferences</span><p class="muted" style="margin:4px 0 12px;font-size:13.5px">${P ? `Now: <b style="color:var(--ink)">${esc(prefsText(P))}</b>. ` : ""}Fill my week only picks shifts that match these.</p>${prefsForm(emp)}</section>${profileCard(emp)}</div><div class="stack">${cycleCard(emp)}</div></div>`;
 }
 function profileCard(emp) {
   return `<section class="card"><span class="eyebrow">Alerts and details</span>
@@ -543,8 +570,11 @@ function viewSchedule() {
   let wk = "";
   if (emp && emp.teams.length) {
     const ws = weekStart(S.sel), hrs = weekHours(emp.id, ws), tgt = emp.weeklyTarget || 40;
-    if (S.preview && S.preview.ws === ws) { const P = S.preview, n = P.plan.length;
+    if (S.askPrefs) {
+      wk = `<div class="plan ask"><div><b>${prefsOf(emp) ? "Change your preferences" : "First, when do you like to work?"}</b><span class="muted">Fill my week only picks shifts that match. You can change this anytime in My profile.</span></div>${prefsForm(emp, "plan")}</div>`;
+    } else if (S.preview && S.preview.ws === ws) { const P = S.preview, n = P.plan.length;
       wk = `<div class="plan"><div><b>Here's a plan: ${plural(n, "shift")}, ${n * 4} hrs</b><span class="muted">Dashed tags on the calendar. Brings you to ${hrsTxt(P.hours + n * 4)} of ${P.target} hrs.</span>
+        <span class="muted tiny">Using: ${esc(prefsText(prefsOf(emp)))} · <button class="linkbtn" data-act="editprefs">Change</button></span>
         <ul>${P.plan.map((x) => `<li>${short(x.d)} · ${BLOCKS[x.b].label} · ${esc(x.t.shortName)}${x.pick.label ? " · " + esc(x.pick.label) : ""}</li>`).join("")}</ul></div>
         <div class="rowact" style="margin:0"><button class="btn quiet" data-act="cancelplan">Not now</button><button class="btn gold" data-act="bookplan">Book these</button></div></div>`;
     } else
@@ -1131,11 +1161,14 @@ const actions = {
   promote: (d) => { const e = empById(d.id); if (e && confirm(`Promote ${d.name} to DSP II?`)) act(() => B.hrSaveEmployee({ ...e, level: "DSP II" }), `${d.name} is now a DSP II.`); },
   autofill: () => {
     const emp = myEmp(), ws = weekStart(S.sel), we = addDays(ws, 6), hours = weekHours(emp.id, ws), target = emp.weeklyTarget || 40;
+    if (!prefsOf(emp)) { S.askPrefs = true; S.preview = null; return render(); }
+    S.askPrefs = false;
     const plan = fillPlan(emp, openForMe(emp, ws, we), hours, target);
-    if (!plan.length) return toast("No open shifts fit your week right now. Try a waitlist instead.");
+    if (!plan.length) { S.preview = null; render(); return toast("No open shifts match your preferences this week. Change them, or pick shifts yourself."); }
     S.preview = { ws, plan, hours, target }; render();
   },
-  cancelplan: () => { S.preview = null; render(); },
+  editprefs: () => { S.askPrefs = true; S.preview = null; render(); },
+  cancelplan: () => { S.preview = null; S.askPrefs = false; render(); },
   bookplan: () => {
     const P = S.preview; if (!P) return; S.preview = null; let ok = 0;
     bookAndCheer(P.ws, async () => { for (const x of P.plan) { try { await B.take({ date: x.d, block: x.b, teamId: x.t.id, homeId: x.pick.homeId, clusterNo: x.pick.clusterNo }); ok++; } catch (_) {} } }, () => `Booked ${plural(ok, "shift")} (${ok * 4} hours).`);
@@ -1210,6 +1243,13 @@ document.addEventListener("submit", (ev) => {
     const emp = { id: fd.get("id") || null, name: String(fd.get("name")).trim(), level: fd.get("level"), weeklyTarget: +fd.get("target") || 0, hireDate: fd.get("hire"),
       teams: fd.getAll("team").map(Number), hasLicense: !!fd.get("license"), hasCna: !!fd.get("cna"), active: !!fd.get("active") };
     act(async () => { await B.hrSaveEmployee(emp); S.editEmp = null; }, emp.id ? "Employee saved." : "Employee added.");
+  }
+  if (kind === "prefs") {
+    const prefs = { days: fd.getAll("day").map(Number), blocks: fd.getAll("blk").map(Number), maxPerDay: +fd.get("max") || 8 };
+    if (!prefs.days.length || !prefs.blocks.length) return toast("Pick at least one day and one time.");
+    const emp = myEmp(); emp.prefs = prefs;   // show it right away; the save below confirms
+    if (f.dataset.then === "plan") { act(() => B.updateMe({ prefs }), "Preferences saved.").then(() => actions.autofill()); }
+    else act(() => B.updateMe({ prefs }), "Preferences saved.");
   }
   if (kind === "timeoff") { const day = String(fd.get("day")); if (day) act(() => B.addTimeOff(day, String(fd.get("note") || "").trim().slice(0, 120)), `${short(day)} marked as a day you can't work.`); }
   if (kind === "resident") {

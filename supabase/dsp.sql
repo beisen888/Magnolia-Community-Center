@@ -1137,3 +1137,8 @@ do $$ declare src text; begin
   end if;
 end $$;
 drop function if exists public.call_out_guard();
+
+
+-- ---------- shift preferences (days / times a DSP likes to work; used by "Fill my week") ----------
+alter table public.employees add column if not exists prefs jsonb;
+grant update (prefs) on public.employees to authenticated;
