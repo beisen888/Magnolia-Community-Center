@@ -87,6 +87,11 @@ const inSlot = (sl) => IDX.slot.get(skey(sl)) || [];
 /* temps HR booked for a slot, and total spots taken (DSPs + temps) */
 const tempN = (sl) => IDX.temp.get(skey(sl)) || 0;
 const taken = (sl) => (IDX.slot.get(skey(sl)) || []).length + tempN(sl);
+/* Pilot rule: once a month's sign-up has closed, agency temps cover every gap, so DSPs see each
+   shift fully staffed (2 DSPs). HR with HR tools on, and the HR tab, still see the real gaps. */
+const tempCovered = (sl) => !(isAdmin() && S.hrTools) && TODAY > signupWindow(monthKey(sl.date)).close;
+const gapTemps = (sl) => (tempCovered(sl) ? Math.max(0, sl.need - taken(sl)) : 0);
+const filled = (sl) => taken(sl) + gapTemps(sl);
 const inTeam = (date, block, teamId) => IDX.team.get(`${date}|${block}|${teamId}`) || [];
 const waitOf = (sl) => IDX.wait.get(skey(sl)) || [];
 const monthClusters = (month) => (IDX.cm[month] ||= clusterMap(S.clusters, S.residents, month));
@@ -104,9 +109,9 @@ function units(team, date, block) {
   }
   return [u(null, null, base, "")];
 }
-function totals(team, date, block) {
+function totals(team, date, block, real) {
   let need = 0, have = 0;
-  for (const x of units(team, date, block)) { need += x.need; have += Math.min(taken(x), x.need); }
+  for (const x of units(team, date, block)) { need += x.need; have += Math.min(real ? taken(x) : filled(x), x.need); }
   // sign-ups that no longer match a slot (e.g. a house removed) still show as people
   return { need, have };
 }
@@ -600,6 +605,7 @@ function slotActs(emp, u, t, hr) {
   else if (busy && !past) { const bt = teamById(busy.teamId); a = `<span class="muted tiny">You're on ${esc(bt ? bt.shortName : "another shift")}${placeOf(busy) ? " · " + esc(placeOf(busy)) : ""}</span>`; }
   else if (emp && !emp.teams.includes(t.id)) a = `<span class="muted tiny">Not your team</span>`;
   else if (emp && t.needsLicense && !emp.hasLicense && !past) a = `<span class="muted tiny">Needs a driver's license</span>`;
+  else if (!past && gapTemps(u) && !hr) a = `<span class="muted tiny">Full · sign-up closed</span>`;
   else if (emp && !past && taken(u) < u.need && windowNote(emp, u.date)) a = `<span class="muted tiny">${esc(windowNote(emp, u.date))}</span>`;
   else if (!past && taken(u) >= u.need && waitOf(u).length >= WAITLIST_MAX) a = `<span class="muted tiny">Full · waitlist full</span>`;
   if (hr && taken(u) < u.need && !past) {
@@ -609,7 +615,7 @@ function slotActs(emp, u, t, hr) {
   return a;
 }
 function pplHtml(emp, u, t, hr) {
-  const ppl = inSlot(u), q = waitOf(u), tn = tempN(u);
+  const ppl = inSlot(u), q = waitOf(u), tn = tempN(u) + (hr ? 0 : gapTemps(u));
   if (!ppl.length && !q.length && !tn) return "";
   return `<div class="ppl">${ppl.map((s) => { const e = empById(s.employeeId); return avatar(e, t, hr ? `<button data-act="remove" data-id="${s.id}" data-name="${esc(e ? e.name : "")}" aria-label="Remove">×</button>` : "").replace('class="av"', `class="av${emp && s.employeeId === emp.id ? " me" : ""}"`); }).join("")}
     ${tn ? `<span class="av temp"><i>T</i>Temp${tn > 1 ? " ×" + tn : ""}${hr ? `<button data-act="untemp" data-date="${u.date}" data-block="${u.block}" data-team="${t.id}" data-home="${u.homeId ?? ""}" data-cl="${u.clusterNo ?? ""}" data-n="-1" aria-label="Remove one temp">×</button>` : ""}</span>` : ""}
@@ -638,12 +644,12 @@ function dayPanel(emp) {
       if (t.staffing === "fixed" || (us.length === 1 && !us[0].label)) {
         const u = us[0]; if (!u) continue;
         const ppl = inSlot(u), mineHere = emp && ppl.some((s) => s.employeeId === emp.id);
-        h += `<div class="slot ${teamClass(t)}${mineHere ? " mine" : ""}${dim}"><span class="nm">${esc(t.shortName)}</span><span class="fill${taken(u) >= u.need ? " full" : ""}">${taken(u)}/${u.need}</span>${hr && ppl.length && !ppl.some((s) => leadOf(empById(s.employeeId))) ? `<span class="badge warn">No Lead DSP</span>` : ""}${slotActs(emp, u, t, hr)}${pplHtml(emp, u, t, hr)}${mineHere ? rotList(t, u) : ""}</div>`;
+        h += `<div class="slot ${teamClass(t)}${mineHere ? " mine" : ""}${dim}"><span class="nm">${esc(t.shortName)}</span><span class="fill${filled(u) >= u.need ? " full" : ""}">${filled(u)}/${u.need}</span>${hr && ppl.length && !ppl.some((s) => leadOf(empById(s.employeeId))) ? `<span class="badge warn">No Lead DSP</span>` : ""}${slotActs(emp, u, t, hr)}${pplHtml(emp, u, t, hr)}${mineHere ? rotList(t, u) : ""}</div>`;
         continue;
       }
       // per-house or per-cluster team: summary + pick grid
       const key = `${ds}|${b}|${t.id}`, tot = totals(t, ds, b), mine = emp && inTeam(ds, b, t.id).find((s) => s.employeeId === emp.id);
-      const openUnits = us.filter((u) => taken(u) < u.need).length, word = t.staffing === "home" ? "house" : "cluster";
+      const openUnits = us.filter((u) => filled(u) < u.need).length, word = t.staffing === "home" ? "house" : "cluster";
       const open = S.open === key;
       h += `<div class="slot big ${teamClass(t)}${mine ? " mine" : ""}${dim}"><span class="nm">${esc(t.shortName)}<small>${us.length ? `${plural(us.length, word)}${t.staffing === "cluster" ? " out" : ""} · ${openUnits} with room` : `No ${word}s out this block`}</small></span><span class="fill${tot.have >= tot.need ? " full" : ""}">${tot.have}/${tot.need}</span>
         ${mine ? `<span class="badge good">You · ${esc(placeOf(mine))}</span>${shiftBtns(mine)}` : ""}
@@ -671,10 +677,10 @@ function quickPick(emp, t, us) {
 function unitGrid(emp, t, us, hr) {
   const fav = emp && t.staffing === "home" ? usualHome(emp, t.id) : null;
   const sel = us.find((u) => skey(u) === S.pick) || (emp && us.find((u) => inSlot(u).some((s) => s.employeeId === emp.id))) || us.find((u) => u.homeId === fav && taken(u) < u.need) || us.find((u) => taken(u) < u.need) || us[0];
-  const chips = us.map((u) => { const n = taken(u), mine = emp && inSlot(u).some((s) => s.employeeId === emp.id), q = waitOf(u).length;
+  const chips = us.map((u) => { const n = filled(u), mine = emp && inSlot(u).some((s) => s.employeeId === emp.id), q = waitOf(u).length;
     return `<button class="uchip${n >= u.need ? " full" : n === 0 ? " empty" : ""}${mine ? " mine" : ""}${u === sel ? " on" : ""}" data-act="pickunit" data-k="${esc(skey(u))}" aria-pressed="${u === sel}" title="${esc(u.label)}: ${n} of ${u.need}${q ? `, ${q} waiting` : ""}">
       <b>${esc(t.staffing === "home" ? u.short : "C" + u.short)}</b><span class="dots">${Array.from({ length: u.need }, (_, i) => `<i class="${i < n ? "f" : ""}"></i>`).join("")}</span>${u.homeId === fav ? `<em>usual</em>` : ""}</button>`; }).join("");
-  const n = taken(sel);
+  const n = filled(sel);
   return `<div class="ugrid">${chips}</div>
     <div class="udetail"><div class="uhead"><b>${esc(sel.label)}</b><span class="fill${n >= sel.need ? " full" : ""}">${n}/${sel.need} DSPs</span>${t.staffing === "cluster" && sel.group && sel.group.ones ? `<span class="badge">+30 min</span>` : ""}${slotActs(emp, sel, t, hr)}</div>
     ${t.staffing === "cluster" ? groupHtml(sel.group) : (() => { const rs = S.residents.filter((r) => r.active !== false && r.homeId === sel.homeId); return rs.length ? `<p class="muted note">Residents: ${rs.map((r) => esc(r.firstName)).join(", ")}</p>` : ""; })()}
@@ -782,7 +788,7 @@ function hrCoverage() {
   const ws = weekStart(S.hrWeekRef), days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(ws, i)), teams = activeTeams();
   let need = 0, have = 0;
   const cell = {};
-  for (const d of days) for (const t of teams) for (let b = 0; b < 6; b++) { const x = totals(t, d, b); cell[`${d}|${b}|${t.id}`] = x; need += x.need; have += x.have; }
+  for (const d of days) for (const t of teams) for (let b = 0; b < 6; b++) { const x = totals(t, d, b, true); cell[`${d}|${b}|${t.id}`] = x; need += x.need; have += x.have; }
   const emps = S.employees.filter((e) => e.active !== false), hrs = emps.map((e) => ({ e, h: weekHours(e.id, ws) }));
   const under = hrs.filter((x) => x.h < x.e.weeklyTarget).length, over = hrs.filter((x) => x.h > x.e.weeklyTarget).length;
   let noLead = 0;
