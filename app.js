@@ -406,6 +406,17 @@ function openForMe(emp, ws, we) {
   }
   return list.sort((a, b) => (a.d !== b.d ? (a.d < b.d ? -1 : 1) : a.b - b.b || a.t.sort - b.t.sort));
 }
+/* Fill my month: plan every week of a month at once (weekly target per week, preferences respected) */
+function monthPlan(emp, mk) {
+  const first = `${mk}-01`, last = addDays(addMonth(mk, 1) + "-01", -1), target = emp.weeklyTarget || 40, plan = [], weeks = [];
+  for (let ws = weekStart(first); ws <= last; ws = addDays(ws, 7)) {
+    const from = ws < first ? first : ws, to = addDays(ws, 6) > last ? last : addDays(ws, 6);
+    if (to < TODAY) continue;
+    const before = weekHours(emp.id, ws), add = fillPlan(emp, openForMe(emp, from, to), before, target);
+    if (add.length) { plan.push(...add); weeks.push({ ws, from, to, before, n: add.length }); }
+  }
+  return { mk, plan, weeks, target };
+}
 /* ---------- shift preferences: which days and times I like, and my longest day ---------- */
 const DAYN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function prefsOf(emp) {
@@ -420,7 +431,7 @@ function prefsText(p) {
   const times = b.length === 6 ? "any time" : run && b.length ? `${clock(BLOCKS[b[0]].start * 60)}–${clock(BLOCKS[b[b.length - 1]].end * 60)}` : b.map((x) => BLOCKS[x].label).join(", ");
   return `${days} · ${times} · up to ${p.maxPerDay || 8} hrs a day`;
 }
-/* the form, used in My profile and the first time someone taps Fill my week */
+/* the form, used in My profile and the first time someone taps Fill my month */
 function prefsForm(emp, then) {
   const p = prefsOf(emp) || { days: [1, 2, 3, 4, 5], blocks: [2, 3, 4], maxPerDay: 8 };
   const tog = (name, v, label, on) => `<label class="tog"><input type="checkbox" name="${name}" value="${v}"${on ? " checked" : ""}><span>${label}</span></label>`;
@@ -545,7 +556,7 @@ function viewProfile() {
   if (!emp) return `<div class="empty">Loading…</div>`;
   const P = prefsOf(emp);
   return `<div class="sec-title"><h2>My profile</h2><button class="linkbtn" data-act="tab" data-tab="home">Back to My week</button></div>
-    <div class="grid2"><div class="stack"><section class="card"><span class="eyebrow">Shift preferences</span><p class="muted" style="margin:4px 0 12px;font-size:13.5px">${P ? `Now: <b style="color:var(--ink)">${esc(prefsText(P))}</b>. ` : ""}Fill my week only picks shifts that match these.</p>${prefsForm(emp)}</section>${profileCard(emp)}</div><div class="stack">${cycleCard(emp)}</div></div>`;
+    <div class="grid2"><div class="stack"><section class="card"><span class="eyebrow">Shift preferences</span><p class="muted" style="margin:4px 0 12px;font-size:13.5px">${P ? `Now: <b style="color:var(--ink)">${esc(prefsText(P))}</b>. ` : ""}Fill my month only picks shifts that match these.</p>${prefsForm(emp)}</section>${profileCard(emp)}</div><div class="stack">${cycleCard(emp)}</div></div>`;
 }
 function profileCard(emp) {
   return `<section class="card"><span class="eyebrow">Alerts and details</span>
@@ -574,16 +585,16 @@ function viewSchedule() {
   }
   let wk = "";
   if (emp && emp.teams.length) {
-    const ws = weekStart(S.sel), hrs = weekHours(emp.id, ws), tgt = emp.weeklyTarget || 40;
+    const last = addDays(addMonth(mk, 1) + "-01", -1), hrs = S.signups.filter((x) => x.employeeId === emp.id && x.date.slice(0, 7) === mk).length * 4;
     if (S.askPrefs) {
-      wk = `<div class="plan ask"><div><b>${prefsOf(emp) ? "Change your preferences" : "First, when do you like to work?"}</b><span class="muted">Fill my week only picks shifts that match. You can change this anytime in My profile.</span></div>${prefsForm(emp, "plan")}</div>`;
-    } else if (S.preview && S.preview.ws === ws) { const P = S.preview, n = P.plan.length;
-      wk = `<div class="plan"><div><b>Here's a plan: ${plural(n, "shift")}, ${n * 4} hrs</b><span class="muted">Dashed tags on the calendar. Brings you to ${hrsTxt(P.hours + n * 4)} of ${P.target} hrs.</span>
+      wk = `<div class="plan ask"><div><b>${prefsOf(emp) ? "Change your preferences" : "First, when do you like to work?"}</b><span class="muted">Fill my month only picks shifts that match. You can change this anytime in My profile.</span></div>${prefsForm(emp, "plan")}</div>`;
+    } else if (S.preview && S.preview.mk === mk) { const P = S.preview, n = P.plan.length;
+      wk = `<div class="plan"><div><b>Here's a plan for ${monthName(mk).split(" ")[0]}: ${plural(n, "shift")}, ${n * 4} hrs</b><span class="muted">Dashed tags on the calendar. Each week gets you to about ${P.target} hrs.</span>
         <span class="muted tiny">Using: ${esc(prefsText(prefsOf(emp)))} · <button class="linkbtn" data-act="editprefs">Change</button></span>
-        <ul>${P.plan.map((x) => `<li>${short(x.d)} · ${BLOCKS[x.b].label} · ${esc(x.t.shortName)}${x.pick.label ? " · " + esc(x.pick.label) : ""}</li>`).join("")}</ul></div>
-        <div class="rowact" style="margin:0"><button class="btn quiet" data-act="cancelplan">Not now</button><button class="btn gold" data-act="bookplan">Book these</button></div></div>`;
+        <ul>${P.weeks.map((w) => `<li><b>${fmt(w.from, { month: "short", day: "numeric" })}–${fmt(w.to, { day: "numeric" })}:</b> ${plural(w.n, "shift")} · ${hrsTxt(w.before)} → ${hrsTxt(w.before + w.n * 4)} hrs</li>`).join("")}</ul></div>
+        <div class="rowact" style="margin:0"><button class="btn quiet" data-act="cancelplan">Not now</button><button class="btn gold" data-act="bookplan">Book all ${n}</button></div></div>`;
     } else
-    wk = `<div class="weekhrs"><span><b>${hrsTxt(hrs)}</b> / ${tgt} hrs <span class="muted">· week of ${fmt(ws, { month: "short", day: "numeric" })}</span></span>${hrs < tgt && addDays(ws, 6) >= TODAY ? `<button class="btn sm gold" data-act="autofill">Fill my week for me</button>` : ""}</div>`;
+    wk = `<div class="weekhrs"><span><b>${hrsTxt(hrs)} hrs</b> <span class="muted">booked in ${monthName(mk).split(" ")[0]}</span></span>${last < TODAY ? "" : TODAY > signupWindow(mk).close ? `<span class="muted tiny">Sign-up closed</span>` : TODAY < rankOpens(signupWindow(mk), levelOf(emp)) ? `<span class="muted tiny">Sign-up opens ${short(rankOpens(signupWindow(mk), levelOf(emp)))}</span>` : `<button class="btn sm gold" data-act="autofill">Fill my month for me</button>`}</div>`;
   }
   return `<div class="grid2"><div><div class="calhead"><button class="iconbtn" data-act="month" data-d="-1" aria-label="Previous month">‹</button><h2>${monthName(mk)}</h2><button class="iconbtn" data-act="month" data-d="1" aria-label="Next month">›</button>
 </div>${wk}
@@ -625,7 +636,7 @@ function dayPanel(emp) {
   const ds = S.sel, past = ds < TODAY, locked = isLocked(ds);
   const hr = isAdmin() && S.hrTools;
   const teams = activeTeams().filter((t) => hr || !S.myTeamsOnly || !emp || emp.teams.includes(t.id));
-  let h = `<div class="sec-title"><div><h2>${long(ds)}</h2><span class="muted" style="font-size:13px">${past ? "Past day · view only" : locked ? "Final schedule (published). Full shifts still take waitlists." : emp && !S.hrTools && windowNote(emp, ds) ? esc(windowNote(emp, ds)) + ". Waitlists stay open." : "Tap 4 hrs for one block, 8 hrs for two in a row"}</span></div>
+  let h = `<div class="sec-title"><div><h2>${long(ds)}</h2><span class="muted" style="font-size:13px">${past ? "Past day · view only" : locked ? "Final schedule (published). Full shifts still take waitlists." : emp && !S.hrTools && windowNote(emp, ds) ? esc(windowNote(emp, ds)) + ". Waitlists stay open." : ""}</span></div>
     <span class="checks">${emp && !hr ? `<label><input type="checkbox" data-act="myonly" ${S.myTeamsOnly ? "checked" : ""}> My teams only</label>` : ""}${isAdmin() ? `<label><input type="checkbox" data-act="hrtools" ${S.hrTools ? "checked" : ""}> HR tools</label>` : ""}</span></div>`;
   if (!teams.length) return h + `<div class="empty">You're not on a team yet. <button class="linkbtn" data-act="tab" data-tab="quiz">Find your team</button></div>`;
   // DSPs see only blocks where they work or can still do something; "Show all" brings back the rest
@@ -1073,7 +1084,7 @@ const actions = {
   resmonth: (d) => { S.resMonth = addMonth(S.resMonth, +d.d); refresh(); },
   month: (d) => { let m = S.m + +d.d, y = S.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } S.y = y; S.m = m; const f = `${y}-${pad(m + 1)}-01`; S.sel = monthKey(TODAY) === monthKey(f) ? TODAY : f; refresh(); },
   allblocks: () => { S.allBlocks = !S.allBlocks; render(); },
-  day: (d) => { S.sel = d.date; S.open = ""; if (S.preview && weekStart(d.date) !== S.preview.ws) S.preview = null; render(); const dp = $("day"); if (dp) { dp.classList.remove("enter"); void dp.offsetWidth; dp.classList.add("enter"); } if (matchMedia("(max-width: 880px)").matches) $("day").scrollIntoView({ behavior: "smooth", block: "start" }); },
+  day: (d) => { S.sel = d.date; S.open = ""; if (S.preview && d.date.slice(0, 7) !== S.preview.mk) S.preview = null; render(); const dp = $("day"); if (dp) { dp.classList.remove("enter"); void dp.offsetWidth; dp.classList.add("enter"); } if (matchMedia("(max-width: 880px)").matches) $("day").scrollIntoView({ behavior: "smooth", block: "start" }); },
   openday: (d) => goDay(d.date),
   openunits: (d) => { S.open = S.open === d.key ? "" : d.key; S.pick = ""; render(); },
   pickunit: (d) => { S.pick = d.k; render(); },
@@ -1167,18 +1178,18 @@ const actions = {
   deltimeoff: (d) => act(() => B.removeTimeOff(+d.id), "Removed."),
   promote: (d) => { const e = empById(d.id); if (e && confirm(`Promote ${d.name} to DSP II?`)) act(() => B.hrSaveEmployee({ ...e, level: "DSP II" }), `${d.name} is now a DSP II.`); },
   autofill: () => {
-    const emp = myEmp(), ws = weekStart(S.sel), we = addDays(ws, 6), hours = weekHours(emp.id, ws), target = emp.weeklyTarget || 40;
+    const emp = myEmp(), mk = `${S.y}-${pad(S.m + 1)}`;
     if (!prefsOf(emp)) { S.askPrefs = true; S.preview = null; return render(); }
     S.askPrefs = false;
-    const plan = fillPlan(emp, openForMe(emp, ws, we), hours, target);
-    if (!plan.length) { S.preview = null; render(); return toast("No open shifts match your preferences this week. Change them, or pick shifts yourself."); }
-    S.preview = { ws, plan, hours, target }; render();
+    const P = monthPlan(emp, mk);
+    if (!P.plan.length) { S.preview = null; render(); return toast(`No open shifts match your preferences in ${monthName(mk).split(" ")[0]}. Sign-up may not be open yet, or you're already at your hours.`); }
+    S.preview = P; render();
   },
   editprefs: () => { S.askPrefs = true; S.preview = null; render(); },
   cancelplan: () => { S.preview = null; S.askPrefs = false; render(); },
   bookplan: () => {
     const P = S.preview; if (!P) return; S.preview = null; let ok = 0;
-    bookAndCheer(P.ws, async () => { for (const x of P.plan) { try { await B.take({ date: x.d, block: x.b, teamId: x.t.id, homeId: x.pick.homeId, clusterNo: x.pick.clusterNo }); ok++; } catch (_) {} } }, () => `Booked ${plural(ok, "shift")} (${ok * 4} hours).`);
+    bookAndCheer(P.plan[0].d, async () => { for (const x of P.plan) { try { await B.take({ date: x.d, block: x.b, teamId: x.t.id, homeId: x.pick.homeId, clusterNo: x.pick.clusterNo }); ok++; } catch (_) {} } }, () => `Booked ${plural(ok, "shift")} (${ok * 4} hours) for ${monthName(P.mk).split(" ")[0]}.`);
   },
   booktemp: (d) => { const sl = slotFrom(d); S.tempHist = null; act(() => B.setTemps(sl, tempN(sl) + 1), `Temp booked${placeOf(sl) ? " for " + placeOf(sl) : ""}.`); },
   bookrow: (d) => {
