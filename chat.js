@@ -31,7 +31,7 @@ function search(q) {
 
 function goBtn(f) {
   if (!f.go) return "";
-  const label = { home: "My week", schedule: "Schedule", teams: "Teams & clusters", quiz: "Find my team", hr: "HR" }[f.go[0]] || "Open";
+  const label = { home: "My week", schedule: "Schedule", teams: "Team", quiz: "the team quiz", profile: "My profile", hr: "HR" }[f.go[0]] || "Open";
   const sub = f.go[1] ? { temps: "Temps needed", coverage: "Coverage", people: "Employees", residents: "Residents & clusters", teams: "Teams & staffing" }[f.go[1]] : "";
   return `<button class="mh-go" data-go="${esc(f.go.join(","))}">Open ${esc(sub || label)} →</button>`;
 }
@@ -65,7 +65,7 @@ async function ask(q) {
   if (hits.length) return answerFaq(hits[0].f);
   say("bot", `I'm not sure about that one. These might help:<div class="mh-chips">${starters().slice(0, 3).map((f) => `<button class="mh-chip sm" data-faq="${f.id}">${esc(f.q)}</button>`).join("")}</div><span class="mh-small">Still stuck? Ask your Lead DSP or HR.</span>`);
 }
-const starters = () => (KB.starters[role()] || []).map((id) => KB.faqs.find((f) => f.id === id)).filter(Boolean);
+const starters = () => (KB.starters[role() === "hr" && (app().tab ? app().tab() === "hr" : true) ? "hr" : "dsp"] || []).map((id) => KB.faqs.find((f) => f.id === id)).filter(Boolean);
 
 /* ---------- UI ---------- */
 const root = document.createElement("div");
@@ -75,23 +75,22 @@ root.innerHTML = `
   <span class="mh-ring" aria-hidden="true"></span>
   <svg class="mh-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16A2.5 2.5 0 0 1 4 13.5v-8Z" fill="currentColor"/><circle cx="8.5" cy="9.5" r="1.2" fill="#29572D"/><circle cx="12" cy="9.5" r="1.2" fill="#29572D"/><circle cx="15.5" cy="9.5" r="1.2" fill="#29572D"/></svg>
   <svg class="mh-x" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-  <span class="mh-live" aria-hidden="true"></span>
 </button>
 <section class="mh-panel" role="dialog" aria-label="Magnolia Helper" hidden>
   <header class="mh-head">
     <span class="mh-av" aria-hidden="true"><svg viewBox="0 0 40 44"><path d="M19 26v14M19 31l-5-4M19 29l5-4" stroke="#F3EDD6" stroke-width="2.6" stroke-linecap="round" fill="none"/><circle cx="19" cy="15" r="13" fill="#F3EDD6"/><circle cx="12" cy="11" r="4.2" fill="#497A39"/><circle cx="25" cy="18" r="4.6" fill="#497A39"/><circle cx="17.5" cy="19" r="2" fill="#DEA710"/></svg></span>
-    <div><b>Magnolia Helper</b><span class="mh-status"><i></i>Online · answers in seconds</span></div>
+    <div><b>Need help?</b><span class="mh-status">Quick answers about the schedule</span></div>
     <button class="mh-close" aria-label="Close helper">×</button>
   </header>
   <div class="mh-log" aria-live="polite"></div>
-  <form class="mh-form"><input class="mh-in" maxlength="300" placeholder="Ask how to do something…" aria-label="Your question" autocomplete="off"><button class="mh-send" aria-label="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" fill="currentColor"/></svg></button></form>
+  <form class="mh-form"><input class="mh-in" maxlength="300" placeholder="Type a question…" aria-label="Your question" autocomplete="off"><button class="mh-send" aria-label="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" fill="currentColor"/></svg></button></form>
 </section>`;
 document.body.appendChild(root);
 const fab = $(".mh-fab", root), panel = $(".mh-panel", root), logEl = $(".mh-log", root), input = $(".mh-in", root);
 
 function welcome() {
   const m = app().me(), first = (m.name || "").split(" ")[0];
-  return `<b class="mh-q">Hi${first ? " " + esc(first) : ""}! I'm the Magnolia Helper.</b>Ask me how to do anything in the schedule, or tap a common question:<div class="mh-chips">${starters().map((f) => `<button class="mh-chip" data-faq="${f.id}">${esc(f.q)}</button>`).join("")}</div>`;
+  return `<b class="mh-q">Hi${first ? " " + esc(first) : ""}! What do you need?</b>Tap a question or type your own.<div class="mh-chips">${starters().slice(0, 4).map((f) => `<button class="mh-chip" data-faq="${f.id}">${esc(f.q)}</button>`).join("")}</div>`;
 }
 function paint(typing) {
   logEl.innerHTML = `<div class="mh-msg bot">${welcome()}</div>` + log.map((m) => `<div class="mh-msg ${m.who}">${m.html}</div>`).join("") +

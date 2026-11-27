@@ -61,10 +61,13 @@ function activeSignupMonth() {
   for (let k = 0; k < 3; k++) { const m = addMonth(monthKey(TODAY), k), w = signupWindow(m); if (TODAY <= w.close) return m; }
   return addMonth(monthKey(TODAY), 1);
 }
+/* the sign-up group someone picks with for a date: "Priority" in their first month or with a merit award */
+const rankOf = (emp, date) => (hasPriority(emp, monthKey(date)) ? "Priority" : levelOf(emp));
+const rankWord = (r) => (r === "Priority" ? "you (priority)" : r + "s");
 /* why someone can't pick on a date, in a few words (or "" when they can) */
 function windowNote(emp, date) {
-  const w = signupWindow(monthKey(date)), lv = levelOf(emp), opens = rankOpens(w, lv);
-  if (TODAY < opens) return `${monthWord(date)} sign-up opens for ${lv}s on ${shortDay(opens)}`;
+  const w = signupWindow(monthKey(date)), lv = rankOf(emp, date), opens = rankOpens(w, lv);
+  if (TODAY < opens) return `${monthWord(date)} sign-up opens for ${rankWord(lv)} on ${shortDay(opens)}`;
   if (TODAY > w.close) return `${monthWord(date)} sign-up closed ${shortDay(w.close)}`;
   return "";
 }
@@ -149,12 +152,10 @@ const canApprove = (emp, teamId) => isAdmin() || (leadOf(emp) && emp.teams.inclu
 function shiftBtns(s) {
   if (startsAt(s).getTime() <= Date.now()) return "";
   const o = offerOf(s.id);
-  const swap = o ? `<span class="badge">${o.status === "claimed" ? "Swap waiting for approval" : "Offered to teammates"}</span><button class="linkbtn" data-act="canceloffer" data-id="${o.id}">Cancel offer</button>`
-    : `<button class="linkbtn" data-act="offer" data-id="${s.id}">Offer to a teammate</button>`;
-  const first = canDrop(s) ? `<button class="btn ghost sm" data-act="drop" data-id="${s.id}">Cancel</button>`
-    : farEnough(s) ? `<span class="muted tiny" title="You can cancel 3+ days ahead once someone is on the waitlist">Cancel opens when someone's on the waitlist</span>`
-    : `<button class="btn danger sm" data-act="callout" data-id="${s.id}">Emergency call-out</button>`;
-  return first + swap;
+  if (o) return `<span class="badge">${o.status === "claimed" ? "A DSP took it · waiting for approval" : "Cancel pending · waiting for a DSP to accept"}</span><button class="linkbtn" data-act="canceloffer" data-id="${o.id}">Keep my shift</button>`;
+  if (canDrop(s)) return `<button class="btn ghost sm" data-act="drop" data-id="${s.id}">Cancel</button>`;
+  if (farEnough(s)) return `<button class="btn ghost sm" data-act="offer" data-id="${s.id}">Cancel</button>`;
+  return `<span class="muted tiny">Can't cancel within 3 days</span><button class="btn danger sm" data-act="callout" data-id="${s.id}">Emergency call-out</button>`;
 }
 function basicOk(emp, date, block, team) {
   if (!emp || !team || !emp.teams.includes(team.id) || offOn(emp.id, date)) return false;
@@ -164,12 +165,12 @@ function basicOk(emp, date, block, team) {
   return true;
 }
 function canTake(emp, sl, team) {
-  if (!basicOk(emp, sl.date, sl.block, team) || !pickOpen(levelOf(emp), sl.date, TODAY) || isLocked(sl.date) || busyAt(emp, sl.date, sl.block)) return false;
+  if (!basicOk(emp, sl.date, sl.block, team) || !pickOpen(rankOf(emp, sl.date), sl.date, TODAY) || isLocked(sl.date) || busyAt(emp, sl.date, sl.block)) return false;
   const need = sl.need ?? slotNeed(team, sl.date, sl.block, sl.homeId ?? null, sl.clusterNo ?? null, ctx());
   return need > 0 && taken(sl) < need;
 }
 function canWait(emp, sl, team) {
-  if (!basicOk(emp, sl.date, sl.block, team) || !pickOpened(levelOf(emp), sl.date, TODAY) || busyAt(emp, sl.date, sl.block) || myWait(emp, sl)) return false;
+  if (!basicOk(emp, sl.date, sl.block, team) || !pickOpened(rankOf(emp, sl.date), sl.date, TODAY) || busyAt(emp, sl.date, sl.block) || myWait(emp, sl)) return false;
   const need = sl.need ?? slotNeed(team, sl.date, sl.block, sl.homeId ?? null, sl.clusterNo ?? null, ctx());
   return need > 0 && taken(sl) >= need && waitOf(sl).length < WAITLIST_MAX;
 }
@@ -397,7 +398,7 @@ function viewHome() {
 function openForMe(emp, ws, we) {
   const from = ws > TODAY ? ws : TODAY, list = [];
   for (let d = from; d <= we && list.length < 60; d = addDays(d, 1)) for (let b = 0; b < 6; b++) for (const tid of emp.teams) {
-    const t = teamById(tid); if (!t || !basicOk(emp, d, b, t) || !pickOpen(levelOf(emp), d, TODAY) || isLocked(d) || busyAt(emp, d, b)) continue;
+    const t = teamById(tid); if (!t || !basicOk(emp, d, b, t) || !pickOpen(rankOf(emp, d), d, TODAY) || isLocked(d) || busyAt(emp, d, b)) continue;
     const open = units(t, d, b).filter((u) => taken(u) < u.need);
     if (!open.length) continue;
     let pick = open[0];
@@ -529,17 +530,18 @@ function nextShift(emp) {
 }
 /* the sign-up calendar for the month being scheduled: Lead DSPs → DSP IIs → DSP Is → closes */
 function windowTimeline(month, me) {
-  const w = signupWindow(month), steps = [["Lead DSPs", w.lead, "Lead DSP"], ["DSP IIs", w.ii, "DSP II"], ["DSP Is", w.i, "DSP I"], ["Sign-up closes", w.close, null]];
+  const w = signupWindow(month), steps = [["Priority", w.prio, "Priority"], ["Lead DSPs", w.lead, "Lead DSP"], ["DSP IIs", w.ii, "DSP II"], ["DSP Is", w.i, "DSP I"], ["Sign-up closes", w.close, null]];
   const now = steps.filter((x) => TODAY >= x[1]).length;   // how many steps have started
-  return `<ol class="wline">${steps.map(([lab, d, lv], k) => `<li class="${k < now ? "done" : ""}${k === now - 1 ? " now" : ""}${me && lv === me ? " mine" : ""}"><i></i><b>${lab}</b><span>${k === 3 ? "end of " : ""}${shortDay(d)}</span>${me && lv === me ? `<em>You</em>` : ""}</li>`).join("")}</ol>`;
+  return `<ol class="wline">${steps.map(([lab, d, lv], k) => `<li class="${k < now ? "done" : ""}${k === now - 1 ? " now" : ""}${me && lv === me ? " mine" : ""}"><i></i><b>${lab}</b><span>${lv ? "" : "end of "}${shortDay(d)}</span>${me && lv === me ? `<em>You</em>` : ""}</li>`).join("")}</ol>`;
 }
 function cycleCard(emp) {
-  const m = activeSignupMonth(), w = signupWindow(m), lv = levelOf(emp), opens = rankOpens(w, lv);
-  const msg = TODAY < opens ? `<b>${monthWord(m + "-01")} sign-up opens for you on ${long(opens)}.</b> Lead DSPs pick first, then DSP IIs, then DSP Is.`
-    : TODAY <= w.close ? `<b>${monthWord(m + "-01")} sign-up is open for you until ${long(w.close)}.</b> After that, HR fills any gaps.`
+  const m = activeSignupMonth(), w = signupWindow(m), lv = rankOf(emp, m + "-01"), opens = rankOpens(w, lv);
+  const why = lv !== "Priority" ? "" : emp.priorityMonth === m ? " You won a merit award, so you pick first." : " It's your first month, so you pick first.";
+  const msg = TODAY < opens ? `<b>${monthWord(m + "-01")} sign-up opens for you on ${long(opens)}.</b>${why || " New DSPs and merit award winners pick first, then Lead DSPs, DSP IIs and DSP Is."}`
+    : TODAY <= w.close ? `<b>${monthWord(m + "-01")} sign-up is open for you until ${long(w.close)}.</b>${why} After that, HR fills any gaps.`
     : `<b>${monthWord(m + "-01")} sign-up has closed.</b>`;
   return `<section class="card"><span class="eyebrow">Sign-up calendar · ${monthName(m)}</span><p style="margin:6px 0 10px;font-size:15px">${msg}</p>${windowTimeline(m, lv)}
-    <p class="muted note">Need to cancel? Only 3 or more days ahead, and only when someone is on the waitlist. Otherwise offer it to a teammate.</p></section>`;
+    <p class="muted note">Can't cancel within 3 days of a shift. Earlier than that, your cancel is confirmed once another DSP takes the shift.</p></section>`;
 }
 function alertsBlock() {
   const P = S.push;
@@ -594,7 +596,7 @@ function viewSchedule() {
         <ul>${P.weeks.map((w) => `<li><b>${fmt(w.from, { month: "short", day: "numeric" })}–${fmt(w.to, { day: "numeric" })}:</b> ${plural(w.n, "shift")} · ${hrsTxt(w.before)} → ${hrsTxt(w.before + w.n * 4)} hrs</li>`).join("")}</ul></div>
         <div class="rowact" style="margin:0"><button class="btn quiet" data-act="cancelplan">Not now</button><button class="btn gold" data-act="bookplan">Book all ${n}</button></div></div>`;
     } else
-    wk = `<div class="weekhrs"><span><b>${hrsTxt(hrs)} hrs</b> <span class="muted">booked in ${monthName(mk).split(" ")[0]}</span></span>${last < TODAY ? "" : TODAY > signupWindow(mk).close ? `<span class="muted tiny">Sign-up closed</span>` : TODAY < rankOpens(signupWindow(mk), levelOf(emp)) ? `<span class="muted tiny">Sign-up opens ${short(rankOpens(signupWindow(mk), levelOf(emp)))}</span>` : `<button class="btn sm gold" data-act="autofill">Fill my month for me</button>`}</div>`;
+    wk = `<div class="weekhrs"><span><b>${hrsTxt(hrs)} hrs</b> <span class="muted">booked in ${monthName(mk).split(" ")[0]}</span></span>${last < TODAY ? "" : TODAY > signupWindow(mk).close ? `<span class="muted tiny">Sign-up closed</span>` : TODAY < rankOpens(signupWindow(mk), rankOf(emp, mk + "-01")) ? `<span class="muted tiny">Sign-up opens ${short(rankOpens(signupWindow(mk), rankOf(emp, mk + "-01")))}</span>` : `<button class="btn sm gold" data-act="autofill">Fill my month for me</button>`}</div>`;
   }
   return `<div class="grid2"><div><div class="calhead"><button class="iconbtn" data-act="month" data-d="-1" aria-label="Previous month">‹</button><h2>${monthName(mk)}</h2><button class="iconbtn" data-act="month" data-d="1" aria-label="Next month">›</button>
 </div>${wk}
@@ -671,8 +673,8 @@ function dayPanel(emp) {
     h += `</div></div>`;
   }
   if (focus && !shown) h += `<div class="empty" style="padding:22px 10px">Nothing open for you on this day.${hidden ? ` <button class="linkbtn" data-act="allblocks">Show every shift</button>` : ""}</div>`;
-  else if (focus && hidden) h += `<p class="muted tiny" style="margin:10px 0 0">Hiding ${plural(hidden, "shift")} that ${likeDay ? "are full or outside your preferred times" : hidden === 1 ? "is full" : "are full"}. <button class="linkbtn" data-act="allblocks">Show all</button></p>`;
-  else if (S.allBlocks && emp && !hr && !past) h += `<p class="muted tiny" style="margin:10px 0 0"><button class="linkbtn" data-act="allblocks">Only show shifts I can take</button></p>`;
+  else if (focus && hidden) h += `<p style="margin:10px 0 0"><button class="linkbtn" data-act="allblocks">See all shifts this day</button></p>`;
+  else if (S.allBlocks && emp && !hr && !past) h += `<p style="margin:10px 0 0"><button class="linkbtn" data-act="allblocks">Show only shifts I can take</button></p>`;
   return h;
 }
 /* the one slot to offer straight away: my usual house if it has room, else the emptiest one I can take */
@@ -705,11 +707,10 @@ function viewTeams() {
   h += `<div class="sec-title"><h2>Activity teams</h2><button class="btn ${emp && !emp.teams.length ? "" : "ghost "}sm" data-act="tab" data-tab="quiz">Not sure? Take the 2-minute quiz</button></div><div class="grid3">`;
   for (const t of activeTeams()) {
     const on = emp && emp.teams.includes(t.id), members = S.employees.filter((e) => e.active !== false && e.teams.includes(t.id)).length;
-    const how = t.staffing === "home" ? `${Math.max(...t.needs)} DSPs per house per block` : t.staffing === "cluster" ? `${Math.max(...t.needs)} DSPs per cluster + 1 per resident who needs their own` : "";
     h += `<article class="card team ${teamClass(t)}"><h3>${esc(t.name)}</h3><p class="muted" style="margin:0;font-size:13.5px">${esc(t.description)}</p>
       <div class="acts">${t.activities.map((a) => `<span>${esc(a)}</span>`).join("")}</div>
       ${roster(t)}
-      <div><span class="eyebrow">Works</span><div class="blocksmini" style="margin-top:4px">${BLOCKS.map((b, i) => `<span class="${t.needs[i] ? "on" : ""}" title="${b.label}: ${t.needs[i]} needed">${hShort(b.start)}</span>`).join("")}</div>${how ? `<div class="muted" style="font-size:12.5px;margin-top:4px">${how}</div>` : ""}</div>
+      <div><span class="eyebrow">Works</span><div class="blocksmini" style="margin-top:4px">${BLOCKS.map((b, i) => `<span class="${t.needs[i] ? "on" : ""}" title="${b.label}: ${t.needs[i]} needed">${hShort(b.start)}</span>`).join("")}</div></div>
       <div class="foot"><span class="muted" style="font-size:12.5px">${members} DSPs${t.needsLicense ? " · license required" : ""}</span>
       ${emp ? (on ? `<button class="btn ghost sm" data-act="leave" data-team="${t.id}">Leave team</button>` : `<button class="btn sm" data-act="join" data-team="${t.id}">Join team</button>`) : ""}</div></article>`;
   }
@@ -940,7 +941,7 @@ function hrPeople() {
   h += `<div class="tw"><table class="data"><thead><tr><th>Name</th><th>Level</th><th>Teams</th><th>Hours this week</th><th>Login</th><th></th></tr></thead><tbody>`;
   for (const e of list) {
     const hrs = weekHours(e.id, ws), tgt = e.weeklyTarget || 0, admin = S.admins && e.userId && S.admins.includes(e.userId);
-    h += `<tr${e.active === false ? ' style="opacity:.5"' : ""}><td><b>${esc(e.name || "Unnamed")}</b>${e.demo ? ' <span class="badge">demo</span>' : ""}${admin ? ' <span class="badge good">HR</span>' : ""}<br><span class="muted" style="font-size:12px">${esc(e.email)}${e.hasLicense ? " · license" : ""}${e.hasCna ? " · CNA" : ""}</span></td>
+    h += `<tr${e.active === false ? ' style="opacity:.5"' : ""}><td><b>${esc(e.name || "Unnamed")}</b>${e.demo ? ' <span class="badge">demo</span>' : ""}${admin ? ' <span class="badge good">HR</span>' : ""}${hasPriority(e, activeSignupMonth()) ? ` <span class="badge gold" title="Picks ${esc(monthName(activeSignupMonth()))} shifts first: ${e.priorityMonth === activeSignupMonth() ? "merit award" : "first month"}">${e.priorityMonth === activeSignupMonth() ? "★ Merit" : "New"} · priority</span>` : ""}<br><span class="muted" style="font-size:12px">${esc(e.email)}${e.hasLicense ? " · license" : ""}${e.hasCna ? " · CNA" : ""}</span></td>
       <td>${esc(e.level)}</td><td>${e.teams.map((id) => { const t = teamById(id); return t ? `<span class="chip ${teamClass(t)}" style="margin:1px"><span class="dot tbg"></span>${esc(t.shortName)}</span>` : ""; }).join("") || '<span class="muted">none</span>'}</td>
       <td style="white-space:nowrap"><span class="minibar${hrs < tgt ? " low" : ""}"><span style="width:${Math.min(100, tgt ? (hrs / tgt) * 100 : 100)}%"></span></span><span class="mono">${hrsTxt(hrs)}/${tgt}</span></td>
       <td>${e.userId ? "Yes" : '<span class="muted">No</span>'}</td>
@@ -957,6 +958,7 @@ function empForm(e) {
     <label>Hire date<input name="hire" type="date" value="${esc(e.hireDate || TODAY)}"></label>
     <div class="wide"><span class="eyebrow">Teams</span><div class="checks">${activeTeams().map((t) => `<label><input type="checkbox" name="team" value="${t.id}" ${(e.teams || []).includes(t.id) ? "checked" : ""}> ${esc(t.shortName)}</label>`).join("")}</div></div>
     <div class="wide checks"><label><input type="checkbox" name="license" ${e.hasLicense ? "checked" : ""}> Driver's license</label><label><input type="checkbox" name="cna" ${e.hasCna ? "checked" : ""}> CNA</label><label><input type="checkbox" name="active" ${e.active !== false ? "checked" : ""}> Active</label></div>
+    ${e.id ? `<div class="wide checks"><label><input type="checkbox" name="merit" ${e.priorityMonth === activeSignupMonth() ? "checked" : ""}> Merit award: priority sign-up for ${monthName(activeSignupMonth())}</label></div>` : ""}
     <div class="wide rowact" style="margin:0"><button type="button" class="btn quiet" data-act="cancelemp">Cancel</button><button class="btn">${e.id ? "Save" : "Add employee"}</button></div></form>`;
 }
 function hrResidents() {
@@ -1170,8 +1172,8 @@ const actions = {
     if (reason === null) return;
     act(() => B.callOut(s.id, reason.trim().slice(0, 200)), (r) => (r && r.filled ? "Called out. Someone from the waitlist has your shift, and HR knows." : "Called out. HR has been told this spot needs cover."));
   },
-  offer: (d) => act(() => B.offerShift(+d.id), "Offered to your teammates. It's still yours until someone takes it and it's approved."),
-  canceloffer: (d) => act(() => B.cancelOffer(+d.id), "Offer cancelled."),
+  offer: (d) => act(() => B.offerShift(+d.id), "Cancel requested. It's confirmed once another DSP accepts your shift. Until then it's still yours."),
+  canceloffer: (d) => act(() => B.cancelOffer(+d.id), "You're keeping this shift."),
   claim: (d) => act(() => B.claimOffer(+d.id), "Request sent. You'll get the shift once HR or the Lead DSP approves."),
   approve: (d) => act(() => B.decideOffer(+d.id, true), "Swap approved. Both DSPs have been told."),
   decline: (d) => act(() => B.decideOffer(+d.id, false), "Swap declined. The shift is back up for grabs."),
@@ -1260,7 +1262,9 @@ document.addEventListener("submit", (ev) => {
   if (kind === "emp") {
     const emp = { id: fd.get("id") || null, name: String(fd.get("name")).trim(), level: fd.get("level"), weeklyTarget: +fd.get("target") || 0, hireDate: fd.get("hire"),
       teams: fd.getAll("team").map(Number), hasLicense: !!fd.get("license"), hasCna: !!fd.get("cna"), active: !!fd.get("active") };
-    act(async () => { await B.hrSaveEmployee(emp); S.editEmp = null; }, emp.id ? "Employee saved." : "Employee added.");
+    const old = emp.id && empById(emp.id), m = activeSignupMonth(), merit = !!fd.get("merit");
+    const meritChanged = old && merit !== (old.priorityMonth === m);
+    act(async () => { await B.hrSaveEmployee({ ...emp, priorityMonth: old ? old.priorityMonth : null }); if (meritChanged) await B.hrSetPriority(emp.id, merit ? m : ""); S.editEmp = null; }, emp.id ? "Employee saved." : "Employee added.");
   }
   if (kind === "prefs") {
     const prefs = { days: fd.getAll("day").map(Number), blocks: fd.getAll("blk").map(Number), maxPerDay: +fd.get("max") || 8 };
@@ -1287,6 +1291,7 @@ window.MagnoliaApp = {
   me: () => { const e = myEmp(); return { name: (e && e.name) || "", isAdmin: isAdmin(), signedIn: !!(B && S.loaded && (B.mode === "preview" || S.me)) }; },
   go: (tab, sub) => { if (tab === "hr" && !isAdmin()) return; S.tab = tab; if (sub) S.hrSub = sub; if (sub === "temps") S.tempFrom = TODAY; syncHash(); refresh(); window.scrollTo({ top: 0, behavior: "smooth" }); },
   token: async () => (B && B.accessToken ? B.accessToken() : ""),
+  tab: () => S.tab,
 };
 
 /* ---------- boot ---------- */

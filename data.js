@@ -23,7 +23,8 @@ const WAITLIST_MAX = 10, CLUSTER_MAX = 8, DROP_HOURS = 72;   // cancel only 3+ d
 /* ---------- monthly sign-up windows, by rank (same rule as signup_window() in the database) ----------
  * A month's schedule opens in the month before: Lead DSPs the 2nd week, DSP IIs a week later, DSP Is a week after that.
  * Weeks start Monday; week 1 is the week holding the 1st. Sign-up closes the Sunday before the last week of that
- * month before (the week holding its last day), so HR has that week to fill gaps. DSP Is always get at least a week. */
+ * month before (the week holding its last day), so HR has that week to fill gaps. DSP Is always get at least a week.
+ * Priority (a DSP's first month, and merit award winners HR picks) opens a week before Lead DSPs. */
 const RANKS = ["Lead DSP", "DSP II", "DSP I"];
 function signupWindow(month) {   // month "YYYY-MM" being scheduled → ISO dates
   const [y, m] = month.split("-").map(Number);
@@ -32,9 +33,17 @@ function signupWindow(month) {   // month "YYYY-MM" being scheduled → ISO date
   const plus = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
   const wk1 = mon(first), lead = plus(wk1, 7), ii = plus(wk1, 14), i = plus(wk1, 21);
   let close = plus(mon(last), -1); if (close < plus(i, 6)) close = plus(i, 6);
-  return { month, lead: isoDate(lead), ii: isoDate(ii), i: isoDate(i), close: isoDate(close) };
+  return { month, prio: isoDate(wk1), lead: isoDate(lead), ii: isoDate(ii), i: isoDate(i), close: isoDate(close) };
 }
-const rankOpens = (w, level) => (level === "Lead DSP" ? w.lead : level === "DSP II" ? w.ii : w.i);
+const rankOpens = (w, level) => (level === "Priority" ? w.prio : level === "Lead DSP" ? w.lead : level === "DSP II" ? w.ii : w.i);
+/* first month on the job (hired within 45 days of the month starting) or a merit award for that month */
+function hasPriority(emp, month) {
+  if (!emp) return false;
+  if (emp.priorityMonth === month) return true;
+  if (!emp.hireDate) return false;
+  const [y, m] = month.split("-").map(Number), start = new Date(y, m - 1, 1);
+  return new Date(emp.hireDate + "T12:00") >= new Date(start.getTime() - 45 * 864e5);
+}
 /* can someone at this level pick shifts on this date, today? */
 function pickOpen(level, date, today) { const w = signupWindow(date.slice(0, 7)); return today >= rankOpens(w, level) && today <= w.close; }
 /* has this level's window for that month opened (waitlists stay open after sign-up closes) */
@@ -384,6 +393,7 @@ function previewBackend(cfg) {
     },
     async updateMe(patch) { Object.assign(meEmp(), patch); done(); },
     async setReminders(on) { st.reminders = on; done(); },
+    async hrSetPriority(id, month) { const e = st.employees.find((x) => x.id === id); if (e) e.priorityMonth = month || null; done(); },
     async hrSaveEmployee(emp) {
       if (emp.id) Object.assign(st.employees.find((e) => e.id === emp.id), emp);
       else st.employees.push({ ...emp, id: "emp-" + st.nextId++, userId: null, email: "", demo: false, quizTeam: null });
@@ -457,7 +467,7 @@ async function supabaseBackend(cfg) {
   const toTeam = (t) => ({ id: t.id, key: t.key, name: t.name, shortName: t.short_name || t.name, description: t.description, activities: t.activities || [],
     needsLicense: t.needs_license, needs: t.needs || [0, 0, 0, 0, 0, 0], staffing: t.staffing || "fixed", color: t.color, sort: t.sort, active: t.active });
   const toEmp = (e) => ({ id: e.id, userId: e.user_id, name: e.name, email: e.email, level: e.level, hireDate: e.hire_date, weeklyTarget: e.weekly_target,
-    hasLicense: e.has_license, hasCna: e.has_cna, teams: e.teams || [], quizTeam: e.quiz_team, active: e.active, demo: e.demo, prefs: e.prefs && e.prefs.days ? e.prefs : null });
+    hasLicense: e.has_license, hasCna: e.has_cna, teams: e.teams || [], quizTeam: e.quiz_team, active: e.active, demo: e.demo, priorityMonth: e.priority_month || null, prefs: e.prefs && e.prefs.days ? e.prefs : null });
   const toSlot = (r) => ({ id: r.id, employeeId: r.employee_id, date: r.shift_date, block: r.block, teamId: r.team_id, homeId: r.home_id ?? null, clusterNo: r.cluster_no ?? null });
   const slotRow = (s) => ({ shift_date: s.date, block: s.block, team_id: s.teamId, home_id: s.homeId ?? null, cluster_no: s.clusterNo ?? null });
 
@@ -571,6 +581,11 @@ async function supabaseBackend(cfg) {
       if ("name" in patch) await sb.from("profiles").update({ name: patch.name }).eq("id", me.userId);
     },
     async setReminders(on) { await run(sb.from("profiles").update({ reminders: on }).eq("id", me.userId)); me = { ...me, reminders: on }; },
+    async hrSetPriority(id, month) {
+      try { await rpc("hr_set_priority", { p_id: id, p_month: month || "" }); }
+      catch (e) { throw friendlyError("Merit priority needs the latest database update (run supabase/dsp.sql in Supabase)."); }
+      ping();
+    },
     async hrSaveEmployee(emp) {
       await rpc("hr_save_employee", { p_id: emp.id || null, p_name: emp.name, p_level: emp.level, p_target: emp.weeklyTarget, p_teams: emp.teams,
         p_license: emp.hasLicense, p_cna: emp.hasCna, p_active: emp.active !== false, p_hire: emp.hireDate || null });

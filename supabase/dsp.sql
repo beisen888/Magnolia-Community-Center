@@ -1076,16 +1076,31 @@ language sql immutable as $$
   select wk1 + 7, wk1 + 14, wk1 + 21, greatest(close0, wk1 + 27) from w
 $$;
 
+-- Priority sign-up: a DSP's first month (hired within 45 days of the month starting) and merit award winners
+-- (HR sets priority_month) pick a week before Lead DSPs.
+alter table public.employees add column if not exists priority_month text;
+create or replace function public.sign_rank(p_level text, p_hire date, p_priority text, p_date date) returns text
+language sql stable as $$
+  select case when p_priority = to_char(p_date, 'YYYY-MM')
+                or (p_hire is not null and p_hire >= date_trunc('month', p_date)::date - 45) then 'Priority' else p_level end
+$$;
 create or replace function public.pick_open(p_level text, p_date date) returns boolean
 language sql stable as $$
-  select public.org_today() between (case p_level when 'Lead DSP' then w.lead when 'DSP II' then w.ii else w.i end) and w.closes
+  select public.org_today() between (case p_level when 'Priority' then w.lead - 7 when 'Lead DSP' then w.lead when 'DSP II' then w.ii else w.i end) and w.closes
   from public.signup_window(p_date) w
 $$;
 create or replace function public.pick_opened(p_level text, p_date date) returns boolean
 language sql stable as $$
-  select public.org_today() >= (case p_level when 'Lead DSP' then w.lead when 'DSP II' then w.ii else w.i end)
+  select public.org_today() >= (case p_level when 'Priority' then w.lead - 7 when 'Lead DSP' then w.lead when 'DSP II' then w.ii else w.i end)
   from public.signup_window(p_date) w
 $$;
+create or replace function public.hr_set_priority(p_id uuid, p_month text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'HR only' using errcode = '42501'; end if;
+  update public.employees set priority_month = nullif(p_month, '') where id = p_id;
+end $$;
+grant execute on function public.sign_rank(text, date, text, date), public.hr_set_priority(uuid, text) to authenticated;
 grant execute on function public.signup_window(date), public.pick_open(text, date), public.pick_opened(text, date) to authenticated;
 
 -- DSPs take shifts only on their own teams, inside their rank's window, and outings only with a license
@@ -1095,7 +1110,7 @@ create policy "take own shift" on public.dsp_signups for insert to authenticated
     select 1 from public.employees e join public.teams t on t.id = team_id
     where e.id = public.my_employee_id() and e.id = employee_id and e.active
       and shift_date >= public.org_today()
-      and public.pick_open(e.level, shift_date)
+      and public.pick_open(public.sign_rank(e.level, e.hire_date, e.priority_month, shift_date), shift_date)
       and not public.week_locked(shift_date)
       and team_id = any (e.teams)
       and (not t.needs_license or e.has_license)
@@ -1108,7 +1123,7 @@ create policy "join waitlist" on public.dsp_waitlist for insert to authenticated
     select 1 from public.employees e join public.teams t on t.id = team_id
     where e.id = public.my_employee_id() and e.id = employee_id and e.active
       and shift_date >= public.org_today()
-      and public.pick_opened(e.level, shift_date)
+      and public.pick_opened(public.sign_rank(e.level, e.hire_date, e.priority_month, shift_date), shift_date)
       and team_id = any (e.teams)
       and (not t.needs_license or e.has_license)
   ));

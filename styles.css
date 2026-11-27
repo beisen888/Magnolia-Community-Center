@@ -737,3 +737,20 @@ table.grid td .tiny{display:block}
 .tog input:checked+span{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .tog input:focus-visible+span{outline:2px solid var(--gold);outline-offset:2px}
 .plan.ask{flex-direction:column;align-items:stretch}
+
+/* ---------- helper chat: lighter ---------- */
+.mh-ring,.mh-live{display:none}
+.mh-head{padding:12px 12px 12px 14px}
+.mh-head b{font-size:18px}
+.mh-status{font-size:12.5px}
+.mh-av{width:34px;height:34px}.mh-av svg{width:22px;height:24px}
+.mh-chips{flex-direction:row;flex-wrap:wrap;gap:6px}
+.mh-chip{border-radius:999px;padding:7px 12px;font-size:13.5px}
+.mh-chip:hover{transform:none}
+.mh-msg{font-size:14.5px}
+@media (max-width:600px){
+  .mh-panel{left:0;right:0;bottom:calc(58px + env(safe-area-inset-bottom,0px));height:min(70vh,560px);border-radius:18px 18px 0 0;box-shadow:0 -12px 40px -12px rgba(0,0,0,.35)}
+  .mh.is-open .mh-fab{display:none}
+}
+.badge.gold{background:color-mix(in srgb,var(--gold) 22%,var(--surface));color:#6b4d00;border-color:color-mix(in srgb,var(--gold) 50%,var(--line))}
+.mh-go{display:table;margin-top:10px}
